@@ -27,12 +27,14 @@
     - Add channel information fields and video duration tracking
     - _Requirements: 1.1, 1.2, 1.3_
 
+  <!-- TODO: Uncomment when ready for analytics
   - [x] 2.2 Implement ClipAnalytics model for comprehensive tracking
     - Create ClipAnalytics model with relationship to ClipRequest
     - Add fields for video analytics, processing metrics, and user behavior
     - Include system performance tracking fields
     - Create and run database migrations
     - _Requirements: 4.4, 4.5_
+  -->
 
 - [x] 3. Create serializers with FieldMixin inheritance
   - [x] 3.1 Implement ClipRequestSerializer with field exclusion capabilities
@@ -42,13 +44,15 @@
     - Implement proper field handling for API responses
     - _Requirements: 1.1, 1.2, 1.3_
 
+  <!-- TODO: Uncomment when ready for analytics
   - [x] 3.2 Implement ClipAnalyticsSerializer for analytics data
     - Create ClipAnalyticsSerializer for analytics model
     - Add computed fields for analytics dashboard
     - _Requirements: 4.4_
+  -->
 
-- [ ] 4. Implement core service classes for video processing
-  - [ ] 4.1 Create VideoInfoService for YouTube video information
+- [x] 4. Implement core service classes for video processing
+  - [x] 4.1 Create VideoInfoService for YouTube video information
     - Create services.py in home app
     - Implement VideoInfoService class with validateYoutubeUrl method
     - Create getVideoInfo method to extract video metadata using yt-dlp
@@ -56,7 +60,7 @@
     - Include error handling for private/unavailable videos
     - _Requirements: 1.1, 4.1, 4.2_
 
-  - [ ] 4.2 Implement HybridProcessingService with three processing methods
+  - [x] 4.2 Implement HybridProcessingService with three processing methods
     - Create HybridProcessingService class in services.py
     - Implement determineProcessingMethod based on video duration (10-minute threshold)
     - Create methodA_downloadAndClip for videos under 10 minutes
@@ -65,16 +69,18 @@
     - Add logProcessingStep method to track processing attempts
     - _Requirements: 2.1, 2.2, 2.3, 2.4_
 
-  - [ ] 4.3 Create AnalyticsService for comprehensive tracking
+  <!-- TODO: Uncomment when ready for analytics
+  - [x] 4.3 Create AnalyticsService for comprehensive tracking
     - Create AnalyticsService class in services.py
     - Implement recordClipRequest method to create analytics entries
     - Add updateProcessingMetrics for real-time metric updates
     - Create recordSuccess and recordFailure methods
     - Implement analytics query methods for dashboard insights
     - _Requirements: 4.4, 4.5_
+  -->
 
-- [ ] 5. Implement ViewSet classes following established patterns
-  - [ ] 5.1 Create ClipRequestViewSet with full CRUD operations
+- [x] 5. Implement ViewSet classes following established patterns
+  - [x] 5.1 Create ClipRequestViewSet with full CRUD operations
     - Update home/views.py to implement ClipRequestViewSet
     - Implement create method using runSerializer with transaction management
     - Add list method with proper queryset optimization and field exclusion
@@ -83,17 +89,17 @@
     - Add filtering and search capabilities for clip requests
     - _Requirements: 1.1, 1.2, 1.3, 5.1, 5.2, 5.3_
 
-  - [ ] 5.2 Implement ValidateUrlViewSet for URL validation endpoint
+  - [x] 5.2 Implement ValidateUrlViewSet for URL validation endpoint
     - Create ValidateUrlViewSet in home/views.py
     - Return video information including duration and channel details
     - Add proper error handling for invalid or inaccessible videos
     - _Requirements: 1.1, 4.1, 4.2, 5.1_
 
-  - [ ] 5.3 Create DownloadClipViewSet for file serving
+  - [x] 5.3 Create DownloadClipViewSet for file serving
     - Create DownloadClipViewSet in home/views.py
     - Implement secure file download with proper headers
     - Add file existence validation and error handling
-    - Include download tracking in analytics
+    <!-- TODO: Uncomment when ready for analytics - Include download tracking in analytics -->
     - _Requirements: 3.3, 3.4, 3.5_
 
 - [ ] 6. Set up background processing with Django-RQ
@@ -107,7 +113,7 @@
   - [ ] 6.2 Create background task for hybrid clip processing
     - Implement process_clip_task function in tasks.py using HybridProcessingService
     - Add proper error handling and retry logic
-    - Include analytics recording in background processing
+    <!-- TODO: Uncomment when ready for analytics - Include analytics recording in background processing -->
     - Implement file cleanup after processing completion
     - _Requirements: 2.1, 2.2, 2.3, 2.4, 4.4_
 
@@ -174,7 +180,7 @@
     - Update home/tests.py with service class tests
     - Test VideoInfoService with various YouTube URL formats
     - Test HybridProcessingService method selection logic
-    - Test AnalyticsService data recording and retrieval
+    <!-- TODO: Uncomment when ready for analytics - Test AnalyticsService data recording and retrieval -->
     - _Requirements: 1.1, 1.2, 1.3, 2.1, 2.2_
 
   - [ ] 11.2 Implement integration tests for API endpoints
@@ -191,9 +197,11 @@
     - Cache processing results for identical requests
     - _Requirements: 2.2, 2.3_
 
+  <!-- TODO: Uncomment when ready for analytics
   - [ ] 12.2 Add monitoring and analytics dashboard
     - Create analytics views in home/views.py for processing method effectiveness
     - Implement performance monitoring for processing times
     - Add popular channels and usage statistics
     - Create analytics dashboard template
     - _Requirements: 4.4, 4.5_
+  -->
