@@ -155,167 +155,11 @@ class ClipProcessingService:
                 "Please install ffmpeg to use this script."
             )
 
-    def ffmpeg_stream_download(self, clipRequest,directStreamUrl) -> bool:
-        """
-            Decouples downloading from processing for maximum stability.
-            Step 1: Download 720p clip (Direct Stream Copy) - Network Bound
-            Step 2: Generate 480p from local 720p file - CPU Bound
-            
-            Args:
-                clipRequest: ClipRequest model instance
-        """
-        try:
-            t1 = time()
-            self.log_processing_step(
-                clipRequest,
-                'method_ffmpeg_stream',
-                'info',
-                {'message': 'Starting Method : FFmpeg Stream Processing'}
-            )
-            
-            # Create directory for this request
-            request_dir = os.path.join('media','clips', str(clipRequest.id))
-            os.makedirs(request_dir, exist_ok=True)
-            
-            # Prepare output filename
-            out720pPath = f"720p.mp4"
-            out480pPath = f"480p.mp4"
-
-            # Absolute paths for file operations (ffmpeg)
-            out720pPathAbsolute = os.path.join(request_dir, out720pPath)
-            out480pPathAbsolute = os.path.join(request_dir, out480pPath)
-            
-            # Relative paths for Django FileField (relative to MEDIA_ROOT)
-            out720pPathRelative = os.path.join('clips', str(clipRequest.id), out720pPath)
-            out480pPathRelative = os.path.join('clips', str(clipRequest.id), out480pPath)
-
-            startSec = time_to_seconds(str(clipRequest.start_time))
-            endSec = time_to_seconds(str(clipRequest.end_time))
-            
-            clipDuration = endSec - startSec
-
-            # when start time is 0, the clip is most likely to be distorted. 
-            # so as of now a quick fix
-            if startSec == 0 :
-                startSec = 1
-          
-            # Use FFmpeg to seek and download only the required segment
-            ffmpegCmd720p = [
-                'ffmpeg',
-                '-ss', str(startSec),  # Seek to start time
-                '-i', directStreamUrl,
-                '-t', str(clipDuration),  # Duration of clip
-                
-                
-                # # Output 1: 720p (Source is max 720p, so we just re-encode or scale if needed)
-                # # We use scale=-2:720 to ensure it fits 720 height while keeping aspect ratio
-                # '-map', '0:v', '-map', '0:a',
-                # '-vf', 'scale=-2:720', 
-                # '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
-                # '-c:a', 'aac',
-                # '-avoid_negative_ts', 'make_zero',
-                # '-y', out_720,
-
-                # Output 1: 720p (Source is 720p, so we COPY for speed)
-                # Note: We use -c copy instead of re-encoding. 
-                # This is much faster but relies on the source keyframes.
-                '-map', '0:v', '-map', '0:a',
-                '-c', 'copy',
-                '-avoid_negative_ts', 'make_zero',
-                '-y', out720pPathAbsolute,
-            ]
-                        
-            try:
-                result = subprocess.run(
-                    ffmpegCmd720p, 
-                    check=True, 
-                    capture_output=True, 
-                    text=True,
-                    timeout=300  # 5 minute timeout
-                )
-            except subprocess.TimeoutExpired as e:
-                errorMsg = f"FFmpeg 720p processing timed out after 300 seconds"
-                logger.error(errorMsg)
-                raise ProcessingFailedException(errorMsg)
-            except subprocess.CalledProcessError as e:
-                errorMsg = f"FFmpeg 720p processing failed: {e.stderr if e.stderr else str(e)}"
-                logger.error(errorMsg)
-                raise ProcessingFailedException(errorMsg)
-            
-            logger.info(f"FFmpeg 720p processing completed successfully")
-            
-            # Verify output file exists and has content
-            if not os.path.exists(out720pPathAbsolute) or os.path.getsize(out720pPathAbsolute) == 0:
-                raise ProcessingFailedException("Output clip file is empty or missing")
-            
-            t2 = time()
-            self.log_processing_step(
-                clipRequest,
-                'download_720p_clip',
-                'info',
-                {'message': f'Time taken to download 720p clip: {t2 - t1}s'}
-            )
-         
-            # --- Phase 2: Generate 480p from Local File ---
-            t3 = time()
-            
-            ffmpegCmd480p = [
-                'ffmpeg',
-                '-i', out720pPathAbsolute,
-                '-vf', 'scale=-2:480',
-                '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
-                '-c:a', 'aac',
-                '-y', out480pPathAbsolute
-            ]
-            
-            try:
-                result = subprocess.run(
-                    ffmpegCmd480p, 
-                    check=True, 
-                    capture_output=True, 
-                    text=True,
-                    timeout=300  # 5 minute timeout
-                )
-            except subprocess.TimeoutExpired as e:
-                raise ProcessingFailedException("FFmpeg 480p processing timed out after 300 seconds")
-            except subprocess.CalledProcessError as e:
-                raise ProcessingFailedException(f"FFmpeg 480p processing failed: {e.stderr if e.stderr else str(e)}")
-            
-            # Verify output file exists and has content
-            if not os.path.exists(out480pPathAbsolute) or os.path.getsize(out480pPathAbsolute) == 0:
-                raise ProcessingFailedException("Output clip file is empty or missing")
-            
-            t4 = time()
-            self.log_processing_step(
-                clipRequest,
-                'generate_480p_clip',
-                'info',
-                {'message': f'Time taken to generate 480p clip: {t4 - t3}s'}
-            )
-             
-            # Update clip request with file info
-            clipRequest.clip_720p = out720pPathRelative
-            clipRequest.clip_480p = out480pPathRelative
-            clipRequest.clip_720p_size = os.path.getsize(out720pPathAbsolute)
-            clipRequest.clip_480p_size = os.path.getsize(out480pPathAbsolute)
-            clipRequest.save(update_fields=['clip_720p', 'clip_480p', 'clip_720p_size', 'clip_480p_size'])
-            
-            return True
-            
-        except Exception as e:
-            logger.error(traceback.format_exc())
-            self.log_processing_step(
-                clipRequest,
-                'method_c_error',
-                'error',
-                {'error': str(e), 'exception_type': type(e).__name__}
-            )
-            return False
-    
     @job('default', timeout='5m')
     def process_clip_request(self, clipRequest) -> bool:
         """
-        Process a clip request using the appropriate hybrid method.
+        Process a clip request using the optimized hybrid method (Smart Cut).
+        Downloads the 720p video using ytdlp and then uses ffmpeg to generate 480p video.
         
         Args:
             clipRequest: ClipRequest model instance
@@ -324,88 +168,149 @@ class ClipProcessingService:
             bool: True if processing successful, False otherwise
         """
         try:
+            from yt_dlp.utils import download_range_func
             t1 = time()
+            
             # Log processing start
             self.log_processing_step(
                 clipRequest, 
                 'processing_start', 
                 'info', 
-                {'message': 'Starting clip processing'}
+                {'message': 'Starting clip processing (Smart Cut)'}
             )
-                
-            # Get video info of youtube url
-            ydlOpts = {
+            
+            # Create directory for this request
+            request_dir = os.path.join(settings.MEDIA_ROOT, 'clips', str(clipRequest.id))
+            os.makedirs(request_dir, exist_ok=True)
+            
+            # Prepare output filenames
+            out720pPath = "720p.mp4"
+            out480pPath = "480p.mp4"
+
+            # Absolute paths for file operations
+            out720pPathAbsolute = os.path.join(request_dir, out720pPath)
+            out480pPathAbsolute = os.path.join(request_dir, out480pPath)
+            
+            # Relative paths for Django FileField
+            out720pPathRelative = os.path.join('clips', str(clipRequest.id), out720pPath)
+            out480pPathRelative = os.path.join('clips', str(clipRequest.id), out480pPath)
+
+            startSec = time_to_seconds(str(clipRequest.start_time))
+            endSec = time_to_seconds(str(clipRequest.end_time))
+            
+            # --- Phase 1: Download 720p (Smart Cut with yt-dlp) ---
+            # This step downloads AND extracts metadata in one go
+            
+            ydl_opts_step1 = {
                 **self.base_ydl_opts,
                 'format': 'best[height<=720]',
+                'download_ranges': download_range_func(None, [(startSec, endSec)]),
+                'force_keyframes_at_cuts': True,
+                'outtmpl': out720pPathAbsolute,
+                'merge_output_format': 'mp4',
+                'quiet': True,
+                'overwrites': True,
             }
             
-            with yt_dlp.YoutubeDL(ydlOpts) as ydl:
-                videoInfo = ydl.extract_info(clipRequest.youtube_url, download=False)
-
-                if not videoInfo or 'url' not in videoInfo:
-                    raise ProcessingFailedException("Could not extract streaming URL")
+            with yt_dlp.YoutubeDL(ydl_opts_step1) as ydl:
+                info = ydl.extract_info(clipRequest.youtube_url, download=True)
+                out720pPathActual = ydl.prepare_filename(info)
                 
-                # Check if end time is greater than video duration
-
-                duration = videoInfo.get('duration',0)
-                endSec = time_to_seconds(str(clipRequest.end_time))
-                if endSec > duration:
-                    # set end time to video duration
-                    endSec = videoInfo.get('duration_string')
-                    clipRequest.end_time = endSec
-                    
+                # --- Metadata Update (Optimization: Done during download) ---
+                clipRequest.original_title = info.get('title')
+                clipRequest.channel_name = info.get('channel')
+                clipRequest.channel_id = info.get('channel_id')
+                clipRequest.clip_duration = info.get('duration')
                 
-                directStreamUrl = videoInfo.get('url')
-                clipRequest.original_title = videoInfo.get('title')
-                clipRequest.channel_name = videoInfo.get('channel')
-                clipRequest.channel_id = videoInfo.get('channel_id')
-                clipRequest.clip_duration = videoInfo.get('duration')
-
-                clipRequest.save(update_fields=['original_title', 'channel_name', 'channel_id', 'clip_duration','end_time'])
+                # Handle duration checks (cleanup logic)
+                video_duration = info.get('duration', 0)
+                if endSec > video_duration:
+                     # If user requested time beyond video length, update DB to reflect reality
+                     # yt-dlp automatically clipped to end
+                     clipRequest.end_time = info.get('duration_string', str(video_duration))
+                
+                clipRequest.save(update_fields=['original_title', 'channel_name', 'channel_id', 'clip_duration', 'end_time'])
             
-            t2 = time()
+            # Verify output file exists and has content
+            if not os.path.exists(out720pPathActual) or os.path.getsize(out720pPathActual) == 0:
+                # Fallback check if extension varied
+                if not out720pPathActual.endswith('.mp4') and os.path.exists(out720pPathActual + '.mp4'):
+                    out720pPathActual += '.mp4'
+                else:
+                    raise ProcessingFailedException("Phase 1 failed: Output clip file is empty or missing")
 
+            t2 = time()
             self.log_processing_step(
                 clipRequest,
-                'get_video_info',
+                'download_720p_clip',
                 'info',
-                {'message': f'Got video info in {t2 - t1}s'}
+                {'message': f'Downloaded 720p clip in {t2 - t1:.2f}s'}
             )
 
-            success = self.ffmpeg_stream_download(clipRequest,directStreamUrl)
-
+            # --- Phase 2: Generate 480p from Local File ---
             t3 = time()
-            logger.info(f"Total time taken to process clip: {t3 - t1}s")
-
-            # Update final status
-            if success:
-                clipRequest.status = STATUS_CHOICES[1][0] # completed
-                clipRequest.processed_at = timezone.now()
-                self.log_processing_step(
-                    clipRequest,
-                    'processing_complete',
-                    'success',
-                    {'message': f'Clip processing completed successfully, time taken: {t3 - t1}s'}
-                )
-            else:
-                clipRequest.status = STATUS_CHOICES[2][0] # failed
-                self.log_processing_step(
-                    clipRequest,
-                    'processing_failed',
-                    'error',
-                    {'message': 'All processing methods failed'}
-                )
             
-            clipRequest.total_time_taken = t3 - t1
-            clipRequest.save(update_fields=['status', 'processed_at', 'total_time_taken'])
-            return success
+            ffmpegCmd480p = [
+                'ffmpeg',
+                '-i', out720pPathActual,
+                '-vf', 'scale=-2:480',
+                '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+                '-c:a', 'aac',
+                '-y', out480pPathAbsolute
+            ]
+            
+            try:
+                subprocess.run(
+                    ffmpegCmd480p, 
+                    check=True, 
+                    capture_output=True, 
+                    text=True,
+                    timeout=300
+                )
+            except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
+                error_msg = f"FFmpeg 480p processing failed: {getattr(e, 'stderr', str(e))}"
+                logger.error(error_msg)
+                raise ProcessingFailedException(error_msg)
+            
+            # Verify output
+            if not os.path.exists(out480pPathAbsolute) or os.path.getsize(out480pPathAbsolute) == 0:
+                raise ProcessingFailedException("Output 480p file is empty or missing")
+            
+            t4 = time()
+            self.log_processing_step(
+                clipRequest,
+                'generate_480p_clip',
+                'info',
+                {'message': f'Generated 480p clip in {t4 - t3:.2f}s'}
+            )
+
+            # --- Final Success Update ---
+            clipRequest.clip_720p = out720pPathRelative
+            clipRequest.clip_480p = out480pPathRelative
+            clipRequest.clip_720p_size = os.path.getsize(out720pPathActual)
+            clipRequest.clip_480p_size = os.path.getsize(out480pPathAbsolute)
+            
+            clipRequest.status = STATUS_CHOICES[1][0] # completed
+            clipRequest.processed_at = timezone.now()
+            clipRequest.total_time_taken = t4 - t1
+            clipRequest.save(update_fields=[
+                'clip_720p', 'clip_480p', 'clip_720p_size', 'clip_480p_size',
+                'status', 'processed_at', 'total_time_taken'
+            ])
+            
+            self.log_processing_step(
+                clipRequest,
+                'processing_complete',
+                'success',
+                {'message': f'Clip processing completed successfully, total time: {t4 - t1:.2f}s'}
+            )
+            return True
 
         except Exception as e:
             logger.error(traceback.format_exc())
             clipRequest.status = STATUS_CHOICES[2][0] # failed
             clipRequest.error_message = str(e)
             clipRequest.save(update_fields=['status', 'error_message'])
-
             
             self.log_processing_step(
                 clipRequest,
@@ -413,7 +318,6 @@ class ClipProcessingService:
                 'error',
                 {'error': str(e), 'exception_type': type(e).__name__}
             )
-            
             return False
     
  
