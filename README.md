@@ -257,3 +257,17 @@ For support and questions:
 - Create an issue on GitHub
 - Check the troubleshooting section above
 - Review the application logs for error details
+
+
+
+Future features
+1. multiple clips of one video
+2. speed up or down
+
+
+
+
+# analytics
+3 min long clip  83s
+   720p 38mb 60s
+   480p 21mb 23s

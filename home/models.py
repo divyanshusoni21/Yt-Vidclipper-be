@@ -4,7 +4,11 @@ from utility.mixins import UUIDMixin
 # Create your models here.
 
 def clip_file_path(instance,fileName):
-    return f'clips/{instance.channel_name}/{fileName}'
+    """Generate file path for clip uploads using clip_request's video_info channel_name"""
+    channel_name = 'unknown'
+    if instance.clip_request and instance.clip_request.video_info:
+        channel_name = instance.clip_request.video_info.channel_name or 'unknown'
+    return f'clips/{channel_name}/{fileName}'
 
 from django.db import models
 from django.contrib.auth.models import AbstractUser
@@ -16,6 +20,14 @@ STATUS_CHOICES = [
         ('completed', 'Completed'),
         ('failed', 'Failed'),
     ]
+
+CLIP_RESOLUTION = (
+    ('1080p', '1080p'), 
+    ('720p', '720p'),
+    ('480p', '480p'),
+    ('360p', '360p'),
+    ('240p', '240p'),
+)
 
 class User(AbstractUser, UUIDMixin):
     """Custom User model extending Django's AbstractUser"""
@@ -40,6 +52,18 @@ class User(AbstractUser, UUIDMixin):
             'refresh': str(refresh),
             'access': str(accessToken)
         }
+    
+class VideoDetail(UUIDMixin):
+    video_id = models.CharField(max_length=100,blank=True)
+    video_duration = models.IntegerField(null=True, blank=True)
+    channel_name = models.CharField(max_length=200, null=True, blank=True)
+    channel_id = models.CharField(max_length=100, null=True, blank=True)
+    video_title = models.CharField(max_length=200, null=True, blank=True)
+    
+    def __str__(self):
+        return f"{self.video_title} - {self.video_id}"
+
+
 
 class ClipRequest(UUIDMixin):
 
@@ -49,14 +73,8 @@ class ClipRequest(UUIDMixin):
     end_time = models.TimeField()    
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     processed_at = models.DateTimeField(null=True, blank=True)
-    clip_720p = models.FileField(upload_to=clip_file_path, null=True, blank=True)
-    clip_480p = models.FileField(upload_to=clip_file_path, null=True, blank=True)
-    original_title = models.CharField(max_length=200, null=True, blank=True)
-    clip_720p_size = models.BigIntegerField(null=True, blank=True,help_text="clip size in mb")
-    clip_480p_size = models.BigIntegerField(null=True, blank=True,help_text="clip size in mb")
-    clip_duration = models.IntegerField(null=True, blank=True)  # total video duration in seconds
-    channel_name = models.CharField(max_length=200, null=True, blank=True)
-    channel_id = models.CharField(max_length=100, null=True, blank=True)
+    video_info = models.ForeignKey(VideoDetail, on_delete=models.SET_NULL, null=True, blank=True)
+    clip_duration = models.IntegerField(null=True, blank=True,help_text="clip duration in seconds")  # clip duration in seconds
     error_message = models.TextField(null=True, blank=True)
     total_time_taken = models.IntegerField(null=True, blank=True)
     processing_log = models.JSONField(default=dict, blank=True)  # Stores detailed processing steps and errors
@@ -68,6 +86,16 @@ class ClipRequest(UUIDMixin):
         
     def __str__(self):
         return f"ClipRequest {self.id} - {self.youtube_url} ({self.start_time}-{self.end_time}s)"
+    
+class Clip(UUIDMixin):
+    clip_request = models.ForeignKey(ClipRequest, on_delete=models.CASCADE, related_name='clips')
+    clip = models.FileField(upload_to=clip_file_path)
+    size = models.FloatField(null=True, blank=True,help_text="clip size in mb")
+    duration = models.IntegerField(null=True, blank=True,help_text="clip duration in seconds")
+    resolution = models.CharField(max_length=10,choices=CLIP_RESOLUTION, blank=True)
+
+    def __str__(self):
+        return f"{self.clip_request.id} - {self.resolution}"
 
 
 class ClipAnalytics(UUIDMixin):

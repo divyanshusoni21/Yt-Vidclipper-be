@@ -8,14 +8,15 @@ from typing import Dict, Any
 from django.conf import settings
 from django.utils import timezone
 
-from .models import STATUS_CHOICES
+from .models import STATUS_CHOICES, VideoDetail, Clip
+from .serializers import VideoDetailSerializer, ClipSerializer
 import shutil
 from time import time
-from utility.functions import time_to_seconds
+from utility.functions import time_to_seconds, runSerializer
 import traceback
 from yt_helper.settings import logger
 from django_rq import job
-
+from django.core.files import File
 
 class VideoNotAvailableException(Exception):
     """Exception raised when a video is not available or accessible."""
@@ -190,14 +191,12 @@ class ClipProcessingService:
             # Absolute paths for file operations
             out720pPathAbsolute = os.path.join(request_dir, out720pPath)
             out480pPathAbsolute = os.path.join(request_dir, out480pPath)
-            
-            # Relative paths for Django FileField
-            out720pPathRelative = os.path.join('clips', str(clipRequest.id), out720pPath)
-            out480pPathRelative = os.path.join('clips', str(clipRequest.id), out480pPath)
 
             startSec = time_to_seconds(str(clipRequest.start_time))
             endSec = time_to_seconds(str(clipRequest.end_time))
             
+            clipDurationSeconds = endSec - startSec
+
             # --- Phase 1: Download 720p (Smart Cut with yt-dlp) ---
             # This step downloads AND extracts metadata in one go
             
@@ -216,20 +215,40 @@ class ClipProcessingService:
                 info = ydl.extract_info(clipRequest.youtube_url, download=True)
                 out720pPathActual = ydl.prepare_filename(info)
                 
-                # --- Metadata Update (Optimization: Done during download) ---
-                clipRequest.original_title = info.get('title')
-                clipRequest.channel_name = info.get('channel')
-                clipRequest.channel_id = info.get('channel_id')
-                clipRequest.clip_duration = info.get('duration')
+                # --- Create/Update VideoDetail object ---
+                video_id = info.get('id', '')
+                video_duration = info.get('duration', 0)
+                video_title = info.get('title', '')
+                channel_name = info.get('channel', '')
+                channel_id = info.get('channel_id', '')
+                
+                # Create or update VideoDetail
+                videoDetailData = {
+                    'video_id': video_id,
+                    'video_duration': video_duration,
+                    'video_title': video_title,
+                    'channel_name': channel_name,
+                    'channel_id': channel_id,
+                }
+                
+                # Check if VideoDetail already exists for this video_id
+                existingVideoDetail = VideoDetail.objects.filter(video_id=video_id).first()
+                if existingVideoDetail:
+                    videoDetail, _ = runSerializer(VideoDetailSerializer, videoDetailData, obj=existingVideoDetail)
+                else:
+                    videoDetail, _ = runSerializer(VideoDetailSerializer, videoDetailData)
+                
+                # Link VideoDetail to ClipRequest
+                clipRequest.video_info = videoDetail
+                clipRequest.clip_duration = clipDurationSeconds
                 
                 # Handle duration checks (cleanup logic)
-                video_duration = info.get('duration', 0)
                 if endSec > video_duration:
                      # If user requested time beyond video length, update DB to reflect reality
                      # yt-dlp automatically clipped to end
                      clipRequest.end_time = info.get('duration_string', str(video_duration))
                 
-                clipRequest.save(update_fields=['original_title', 'channel_name', 'channel_id', 'clip_duration', 'end_time'])
+                clipRequest.save(update_fields=['video_info', 'clip_duration', 'end_time'])
             
             # Verify output file exists and has content
             if not os.path.exists(out720pPathActual) or os.path.getsize(out720pPathActual) == 0:
@@ -238,6 +257,22 @@ class ClipProcessingService:
                     out720pPathActual += '.mp4'
                 else:
                     raise ProcessingFailedException("Phase 1 failed: Output clip file is empty or missing")
+                
+            clip720pBytes = os.path.getsize(out720pPathActual)
+            clip720pMb = round(clip720pBytes / (1024 * 1024), 2)  # Convert bytes to MB
+            # Create 720p Clip object using Django File object
+           
+            with open(out720pPathActual, 'rb') as f720p:
+                clip720pFile = File(f720p, name=out720pPath)
+                clip720pData = {
+                    'clip_request': clipRequest.id,
+                    'clip': clip720pFile,
+                    'size': float(clip720pMb,),
+                    'duration': clipDurationSeconds,
+                    'resolution': '720p',
+                }
+                clip720p, _ = runSerializer(ClipSerializer, clip720pData)
+
 
             t2 = time()
             self.log_processing_step(
@@ -284,17 +319,29 @@ class ClipProcessingService:
                 {'message': f'Generated 480p clip in {t4 - t3:.2f}s'}
             )
 
-            # --- Final Success Update ---
-            clipRequest.clip_720p = out720pPathRelative
-            clipRequest.clip_480p = out480pPathRelative
-            clipRequest.clip_720p_size = os.path.getsize(out720pPathActual)
-            clipRequest.clip_480p_size = os.path.getsize(out480pPathAbsolute)
+            # --- Create Clip objects for 720p and 480p ---
+            # Get file sizes in bytes and convert to MB
+          
+            clip480pBytes = os.path.getsize(out480pPathAbsolute)
+            clip480pMb = round(clip480pBytes / (1024 * 1024), 2)  # Convert bytes to MB
             
+            # Create 480p Clip object using Django File object
+            with open(out480pPathAbsolute, 'rb') as f480p:
+                clip480pFile = File(f480p, name=out480pPath)
+                clip480pData = {
+                    'clip_request': clipRequest.id,
+                    'clip': clip480pFile,
+                    'size': float(clip480pMb),
+                    'duration': clipDurationSeconds,
+                    'resolution': '480p',
+                }
+                clip480p, _ = runSerializer(ClipSerializer, clip480pData)
+            
+            # --- Final Success Update ---
             clipRequest.status = STATUS_CHOICES[1][0] # completed
             clipRequest.processed_at = timezone.now()
-            clipRequest.total_time_taken = t4 - t1
+            clipRequest.total_time_taken = int(t4 - t1)
             clipRequest.save(update_fields=[
-                'clip_720p', 'clip_480p', 'clip_720p_size', 'clip_480p_size',
                 'status', 'processed_at', 'total_time_taken'
             ])
             
@@ -377,12 +424,14 @@ class ClipProcessingService:
             output_filename = f"clip_{clipRequest.start_time}_{clipRequest.end_time}.mp4"
             output_path = os.path.join(request_dir, output_filename)
             
-            clip_duration = clipRequest.end_time - clipRequest.start_time
+            startSec = time_to_seconds(str(clipRequest.start_time))
+            endSec = time_to_seconds(str(clipRequest.end_time))
+            clip_duration = endSec - startSec
             
             ffmpegCmd = [
                 'ffmpeg',
                 '-i', downloadedVideo,
-                '-ss', str(clipRequest.start_time),
+                '-ss', str(startSec),
                 '-t', str(clip_duration),
                 '-c', 'copy',  # Copy streams without re-encoding for speed
                 '-avoid_negative_ts', 'make_zero',
@@ -411,10 +460,64 @@ class ClipProcessingService:
             if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
                 raise ProcessingFailedException("Output clip file is empty or missing")
             
-            # Update clip request with file info
-            clipRequest.file_path = os.path.relpath(output_path, getattr(settings, 'MEDIA_ROOT', 'media'))
-            clipRequest.file_size = os.path.getsize(output_path)
-            clipRequest.save()
+            # Get video info to determine resolution and create VideoDetail if needed
+            with yt_dlp.YoutubeDL(self.base_ydl_opts) as ydl:
+                info = ydl.extract_info(clipRequest.youtube_url, download=False)
+                video_id = info.get('id', '')
+                video_duration = info.get('duration', 0)
+                video_title = info.get('title', '')
+                channel_name = info.get('channel', '')
+                channel_id = info.get('channel_id', '')
+                
+                # Determine resolution from format (default to 1080p if format was best[height<=1080])
+                height = info.get('height', 1080)
+                if height <= 240:
+                    resolution = '240p'
+                elif height <= 360:
+                    resolution = '360p'
+                elif height <= 480:
+                    resolution = '480p'
+                elif height <= 720:
+                    resolution = '720p'
+                else:
+                    resolution = '1080p'
+                
+                # Create or update VideoDetail
+                videoDetailData = {
+                    'video_id': video_id,
+                    'video_duration': video_duration,
+                    'video_title': video_title,
+                    'channel_name': channel_name,
+                    'channel_id': channel_id,
+                }
+                existingVideoDetail = VideoDetail.objects.filter(video_id=video_id).first()
+                if existingVideoDetail:
+                    videoDetail, _ = runSerializer(VideoDetailSerializer, videoDetailData, obj=existingVideoDetail)
+                else:
+                    videoDetail, _ = runSerializer(VideoDetailSerializer, videoDetailData)
+                
+                clipRequest.video_info = videoDetail
+                clipRequest.save(update_fields=['video_info'])
+            
+            # Create Clip object
+            file_size_bytes = os.path.getsize(output_path)
+            file_size_mb = file_size_bytes / (1024 * 1024)  # Convert bytes to MB
+            startSec = time_to_seconds(str(clipRequest.start_time))
+            endSec = time_to_seconds(str(clipRequest.end_time))
+            clip_duration_seconds = endSec - startSec
+            
+            output_relative_path = os.path.relpath(output_path, getattr(settings, 'MEDIA_ROOT', 'media'))
+            from django.core.files import File
+            with open(output_path, 'rb') as f:
+                clipFile = File(f, name=output_filename)
+                clipData = {
+                    'clip_request': clipRequest.id,
+                    'clip': clipFile,
+                    'size': int(file_size_mb),
+                    'duration': clip_duration_seconds,
+                    'resolution': resolution,
+                }
+                clip, _ = runSerializer(ClipSerializer, clipData)
             
             # Clean up temporary files
             try:
@@ -429,8 +532,9 @@ class ClipProcessingService:
                 'success',
                 {
                     'message': 'Method A completed successfully',
-                    'file_size': clipRequest.file_size,
-                    'output_path': clipRequest.file_path
+                    'file_size': file_size_mb,
+                    'output_path': output_relative_path,
+                    'resolution': resolution
                 }
             )
             
@@ -515,10 +619,64 @@ class ClipProcessingService:
             if not os.path.exists(actual_output) or os.path.getsize(actual_output) == 0:
                 raise ProcessingFailedException("Output clip file is empty or missing")
             
-            # Update clip request with file info
-            clipRequest.file_path = os.path.relpath(actual_output, getattr(settings, 'MEDIA_ROOT', 'media'))
-            clipRequest.file_size = os.path.getsize(actual_output)
-            clipRequest.save()
+            # Get video info to determine resolution and create VideoDetail if needed
+            with yt_dlp.YoutubeDL(self.base_ydl_opts) as ydl:
+                info = ydl.extract_info(clipRequest.youtube_url, download=False)
+                video_id = info.get('id', '')
+                video_duration = info.get('duration', 0)
+                video_title = info.get('title', '')
+                channel_name = info.get('channel', '')
+                channel_id = info.get('channel_id', '')
+                
+                # Determine resolution from format (default to 1080p if format was best[height<=1080])
+                height = info.get('height', 1080)
+                if height <= 240:
+                    resolution = '240p'
+                elif height <= 360:
+                    resolution = '360p'
+                elif height <= 480:
+                    resolution = '480p'
+                elif height <= 720:
+                    resolution = '720p'
+                else:
+                    resolution = '1080p'
+                
+                # Create or update VideoDetail
+                videoDetailData = {
+                    'video_id': video_id,
+                    'video_duration': video_duration,
+                    'video_title': video_title,
+                    'channel_name': channel_name,
+                    'channel_id': channel_id,
+                }
+                existingVideoDetail = VideoDetail.objects.filter(video_id=video_id).first()
+                if existingVideoDetail:
+                    videoDetail, _ = runSerializer(VideoDetailSerializer, videoDetailData, obj=existingVideoDetail)
+                else:
+                    videoDetail, _ = runSerializer(VideoDetailSerializer, videoDetailData)
+                
+                clipRequest.video_info = videoDetail
+                clipRequest.save(update_fields=['video_info'])
+            
+            # Create Clip object
+            file_size_bytes = os.path.getsize(actual_output)
+            file_size_mb = file_size_bytes / (1024 * 1024)  # Convert bytes to MB
+            startSec = time_to_seconds(str(clipRequest.start_time))
+            endSec = time_to_seconds(str(clipRequest.end_time))
+            clip_duration_seconds = endSec - startSec
+            
+            output_relative_path = os.path.relpath(actual_output, getattr(settings, 'MEDIA_ROOT', 'media'))
+            from django.core.files import File
+            with open(actual_output, 'rb') as f:
+                clipFile = File(f, name=output_filename)
+                clipData = {
+                    'clip_request': clipRequest.id,
+                    'clip': clipFile,
+                    'size': int(file_size_mb),
+                    'duration': clip_duration_seconds,
+                    'resolution': resolution,
+                }
+                clip, _ = runSerializer(ClipSerializer, clipData)
             
             self.log_processing_step(
                 clipRequest,
@@ -526,8 +684,9 @@ class ClipProcessingService:
                 'success',
                 {
                     'message': 'Method B completed successfully',
-                    'file_size': clipRequest.file_size,
-                    'output_path': clipRequest.file_path
+                    'file_size': file_size_mb,
+                    'output_path': output_relative_path,
+                    'resolution': resolution
                 }
             )
             

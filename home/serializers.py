@@ -2,23 +2,46 @@ import re
 from rest_framework import serializers
 from django.core.exceptions import ValidationError
 from utility.mixins import FieldMixin
-from .models import ClipRequest, ClipAnalytics
+from .models import ClipRequest, ClipAnalytics, VideoDetail, Clip
 from utility.functions import time_to_seconds
 
+
+
+
+class VideoDetailSerializer(serializers.ModelSerializer):
+    """Serializer for VideoDetail model"""
+    
+    class Meta:
+        model = VideoDetail
+        fields = '__all__'
+        read_only_fields = ('id', 'created_at', 'updated_at')
+
+
+class ClipSerializer(serializers.ModelSerializer):
+    """Serializer for Clip model"""
+    
+    class Meta:
+        model = Clip
+        fields = '__all__'
+        read_only_fields = ('id', 'created_at', 'updated_at')
+
+    
 
 class ClipRequestSerializer(FieldMixin, serializers.ModelSerializer):
     """
     Serializer for ClipRequest model with field exclusion capabilities
     and custom validation for timestamp ranges and YouTube URLs
     """
+
+    clips = serializers.SerializerMethodField()
+
     
     class Meta:
         model = ClipRequest
         fields = '__all__'
         read_only_fields = ('id', 'created_at', 'updated_at', 'processed_at', 
-                           'file_path', 'error_message', 'original_title', 
-                           'file_size', 'video_duration', 'channel_name', 
-                           'channel_id', 'processing_method', 'processing_log')    
+                           'error_message', 'processing_log', 'video_info', 
+                           'clip_duration', 'total_time_taken', 'rq_job_id')    
 
     def validate(self, data):
         """
@@ -53,6 +76,10 @@ class ClipRequestSerializer(FieldMixin, serializers.ModelSerializer):
         
         return data
     
+    def get_clips(self,obj):
+        clips = obj.clips.all()
+        return ClipSerializer(clips, many=True,context=self.context).data
+
     def to_representation(self, instance):
         """
         Customize the serialized representation
@@ -68,21 +95,9 @@ class ClipRequestSerializer(FieldMixin, serializers.ModelSerializer):
 
         clipDuration = endTime - startTime
         data['clip_duration'] = clipDuration
-        
+
+        if "video_info" in data and data["video_info"] is not None:
+            data["video_info"] = VideoDetailSerializer(instance.video_info).data
+
         return data
-    
-    def _format_seconds_to_time(self, seconds):
-        """
-        Convert seconds to MM:SS or HH:MM:SS format
-        """
-        hours = seconds // 3600
-        minutes = (seconds % 3600) // 60
-        secs = seconds % 60
-        
-        if hours > 0:
-            return f"{hours:02d}:{minutes:02d}:{secs:02d}"
-        else:
-            return f"{minutes:02d}:{secs:02d}"
-
-
     

@@ -9,7 +9,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 
-from .models import ClipRequest,STATUS_CHOICES
+from .models import ClipRequest, STATUS_CHOICES, Clip
 from .tasks import get_task_status
 from .serializers import ClipRequestSerializer
 from .services import ClipProcessingService
@@ -155,15 +155,47 @@ class DownloadClipViewSet(viewsets.ViewSet):
                     'status': clipRequest.status
                 }, status=status.HTTP_400_BAD_REQUEST)
             
-            # Check if file path exists
-            if not clipRequest.file_path:
-                logger.error(f"No file path found for completed clip {pk}")
-                return Response({
-                    'error': 'File path not found for this clip'
-                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            # Get resolution from query params (default to highest available)
+            requested_resolution = request.query_params.get('resolution', None)
             
-            # Construct full file path
-            full_file_path = os.path.join(settings.MEDIA_ROOT, clipRequest.file_path)
+            # Get available clips for this request
+            clips = clipRequest.clips.all()
+            if not clips.exists():
+                logger.error(f"No clips found for completed clip request {pk}")
+                return Response({
+                    'error': 'No clip files found for this request'
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            # Select clip based on resolution preference
+            clip = None
+            if requested_resolution:
+                clip = clips.filter(resolution=requested_resolution).first()
+                if not clip:
+                    available_resolutions = list(clips.values_list('resolution', flat=True))
+                    return Response({
+                        'error': f'Requested resolution {requested_resolution} not available',
+                        'available_resolutions': available_resolutions
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                # Default to highest resolution available (order: 1080p > 720p > 480p > 360p > 240p)
+                resolution_priority = ['1080p', '720p', '480p', '360p', '240p']
+                for res in resolution_priority:
+                    clip = clips.filter(resolution=res).first()
+                    if clip:
+                        break
+                if not clip:
+                    clip = clips.first()  # Fallback to any available clip
+            
+            # Get file path from Clip model
+            clip_file = clip.clip
+            if not clip_file:
+                logger.error(f"No file associated with clip {clip.id}")
+                return Response({
+                    'error': 'Clip file not found'
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            # Get full file path
+            full_file_path = clip_file.path
             
             # Validate file existence
             if not os.path.exists(full_file_path):
@@ -187,7 +219,7 @@ class DownloadClipViewSet(viewsets.ViewSet):
                 }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
             
             # Generate appropriate filename
-            filename = self._generate_download_filename(clipRequest)
+            filename = self._generate_download_filename(clipRequest, clip)
             
             try:
                 # Create file response with proper headers
@@ -208,7 +240,7 @@ class DownloadClipViewSet(viewsets.ViewSet):
                 response['Access-Control-Allow-Origin'] = '*'
                 response['Access-Control-Expose-Headers'] = 'Content-Disposition'
                 
-                logger.info(f"Successfully serving file {filename} for clip {pk}")
+                logger.info(f"Successfully serving file {filename} for clip {pk} at resolution {clip.resolution}")
                        
                 return response
                 
@@ -224,3 +256,26 @@ class DownloadClipViewSet(viewsets.ViewSet):
                 'error': 'Download failed',
                 'details': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def _generate_download_filename(self, clipRequest, clip):
+        """
+        Generate download filename based on clip request and clip resolution
+        """
+        video_title = 'clip'
+        if clipRequest.video_info and clipRequest.video_info.video_title:
+            # Sanitize video title for filename
+            video_title = clipRequest.video_info.video_title
+            # Remove invalid filename characters
+            invalid_chars = '<>:"/\\|?*'
+            for char in invalid_chars:
+                video_title = video_title.replace(char, '_')
+            # Limit length
+            if len(video_title) > 50:
+                video_title = video_title[:50]
+        
+        resolution = clip.resolution or 'unknown'
+        start_time_str = str(clipRequest.start_time).replace(':', '-')
+        end_time_str = str(clipRequest.end_time).replace(':', '-')
+        
+        filename = f"{video_title}_{resolution}_{start_time_str}-{end_time_str}.mp4"
+        return filename
