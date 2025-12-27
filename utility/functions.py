@@ -1,5 +1,5 @@
 from threading import Thread
-# from email_func.brevo_email import Email
+from email_func.email import Email
 
 import csv
 import tempfile
@@ -18,21 +18,24 @@ from django.utils.encoding import smart_str
 from django.utils.http import urlsafe_base64_decode
 from .variables import frontendDomain
 from datetime import datetime
-import random
 import secrets
 import string
 
-# def sendMail(body:dict,email:str,subject:str,csvFilePath:list[str] = None ,fileAttachUrl:dict = None,ccMail:list=[],attachFile=None):
-#     data = {'email_body': body, 
-#             'to_email': email,
-#             'email_subject': subject,
-#             "csv_files_paths":csvFilePath,
-#             "file_attach_url": fileAttachUrl,
-#             "cc_mail": ccMail,
-#             "attach_file":attachFile
-#             }
-#     t1 = Thread(target=Email.send_email,args=(data,))
-#     t1.start()
+def sendMail(body:dict,email:str,subject:str,csvFilePath:list[str] = None ,fileAttachUrl:dict = None,ccMail:list=[],attachFile=None,fileAttachUrls:list = None):
+    # Convert single fileAttachUrl to list format for backward compatibility
+    if fileAttachUrl is not None and fileAttachUrls is None:
+        fileAttachUrls = [fileAttachUrl]
+    
+    data = {'email_body': body, 
+            'to_email': email,
+            'email_subject': subject,
+            "csv_files_paths":csvFilePath,
+            "cc_mail": ccMail,
+            "attach_file":attachFile,
+            "file_attach_urls":fileAttachUrls
+            }
+    t1 = Thread(target=Email.send_email,args=(data,))
+    t1.start()
 
 def runSerializer(serializerClass,data,obj = None,request = None) -> tuple :
     ''' creates or updates model object with serializer class , returns object and data as tuple'''

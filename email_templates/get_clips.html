@@ -1,0 +1,88 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<table border="0" cellpadding="0" cellspacing="0" width="100%">
+    <!-- Hero Section -->
+    <tr>
+        <td align="center" style="padding-bottom: 30px;">
+            <h1 style="margin: 0; color: #1f2937; font-size: 28px; font-weight: 800; line-height: 1.2;">Your clips are ready!</h1>
+            <p style="margin: 10px 0 0 0; color: #4b5563; font-size: 16px;">We've processed your request for the video below.</p>
+        </td>
+    </tr>
+
+    <!-- Video Info Card -->
+    <tr>
+        <td style="padding: 24px; background-color: #f9fafb; border: 1px solid #e5e7eb; border-radius: 12px; margin-bottom: 30px;">
+            <table border="0" cellpadding="0" cellspacing="0" width="100%">
+                <tr>
+                    <td>
+                        <p style="margin: 0; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #6b7280;">Video Details</p>
+                        <h2 style="margin: 8px 0; color: #1f2937; font-size: 18px; font-weight: 700;">{{ clip_request.video_info.video_title }}</h2>
+                        <p style="margin: 0; color: #4b5563; font-size: 14px;">
+                            <strong>Channel:</strong> {{ clip_request.video_info.channel_name }}<br>
+                            <strong>Time Range:</strong> {{ clip_request.start_time }} - {{ clip_request.end_time }}<br>
+                            <strong>YouTube URL:</strong> <a href="{{ clip_request.youtube_url }}" style="color: #2563eb; text-decoration: none;">View Original</a>
+                        </p>
+                    </td>
+                </tr>
+            </table>
+        </td>
+    </tr>
+
+    <!-- Spacer -->
+    <tr><td style="height: 30px;"></td></tr>
+
+    <!-- Clips Section -->
+    <tr>
+        <td>
+            <h3 style="margin: 0 0 20px 0; color: #1f2937; font-size: 20px; font-weight: 700;">Download Your Clips</h3>
+            
+            <table border="0" cellpadding="0" cellspacing="0" width="100%">
+                {% for clip in clip_request.clips %}
+                <tr>
+                    <td style="padding-bottom: 16px;">
+                        <table border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px; overflow: hidden;">
+                            <tr>
+                                <td style="padding: 20px;">
+                                    <table border="0" cellpadding="0" cellspacing="0" width="100%">
+                                        <tr>
+                                            <td>
+                                                <div style="display: inline-block; padding: 4px 12px; background-color: {% if clip.resolution == '720p' %}#eff6ff{% else %}#f5f3ff{% endif %}; border-radius: 9999px; margin-bottom: 10px;">
+                                                    <span style="font-size: 12px; font-weight: 700; color: {% if clip.resolution == '720p' %}#2563eb{% else %}#7c3aed{% endif %};">{{ clip.resolution }}</span>
+                                                </div>
+                                                <p style="margin: 0; font-size: 14px; color: #4b5563;">
+                                                    <strong>Duration:</strong> {{ clip.duration }}s<br>
+                                                    <strong>Size:</strong> {{ clip.size }} MB
+                                                </p>
+                                            </td>
+                                            <td align="right">
+                                                <a href="{{ clip.clip }}" target="_blank" style="background-color: #2563eb; color: #ffffff; padding: 10px 20px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px; display: inline-block;">Download</a>
+                                            </td>
+                                        </tr>
+                                    </table>
+                                </td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+                {% endfor %}
+            </table>
+        </td>
+    </tr>
+
+    <!-- Ready to make more -->
+    <tr>
+        <td align="center" style="padding-top: 50px;">
+            <table border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #2563eb; border-radius: 16px; padding: 50px 30px;">
+                <tr>
+                    <td align="center">
+                        <h3 style="margin: 0 0 12px 0; color: #ffffff; font-size: 28px; font-weight: 800; line-height: 1.2;">Ready to make more clips?</h3>
+                        <p style="margin: 0 0 32px 0; color: #ffffff; font-size: 18px; line-height: 1.5;">Transform another video into perfect clips instantly.</p>
+                        <a href="{{ frontendDomain }}" style="background-color: #ffffff; color: #2563eb; padding: 14px 32px; border-radius: 9999px; text-decoration: none; font-weight: 700; font-size: 16px; display: inline-block; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">Get Started</a>
+                    </td>
+                </tr>
+            </table>
+        </td>
+    </tr>
+</table>
+{% endblock %}

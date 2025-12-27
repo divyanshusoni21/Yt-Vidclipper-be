@@ -190,6 +190,7 @@ ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL","divyanshusoni.relish@gmail.com")
 ADMIN_PHONE = os.environ.get("ADMIN_PHONE","")
 FRONTEND_URL = os.environ.get("FRONTEND_URL","http://localhost:3000")
 BREVO_API_KEY = os.environ.get("BREVO_API_KEY","")
+DEFAULT_PASSWORD = os.environ.get("DEFAULT_PASSWORD")
 
 
 REST_FRAMEWORK = {
@@ -211,28 +212,6 @@ SIMPLE_JWT = {
 
 FILE_UPLOAD_MAX_MEMORY_SIZE = 20 * 1024 * 1024 # 20 Mb limit
 
-# # aws s3 settings
-# AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID')
-# AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY')
-# AWS_STORAGE_BUCKET_NAME = os.environ.get('AWS_STORAGE_BUCKET_NAME')
-# AWS_S3_ADDRESSING_STYLE = os.environ.get('AWS_S3_ADDRESSING_STYLE')
-# AWS_S3_REGION_NAME = os.environ.get('AWS_S3_REGION_NAME')
-# AWS_S3_SIGNATURE_VERSION = os.environ.get('AWS_S3_SIGNATURE_VERSION')
-# AWS_S3_FILE_OVERWRITE = os.environ.get('AWS_S3_FILE_OVERWRITE')
-# AWS_DEFAULT_ACL = os.environ.get('AWS_DEFAULT_ACL')
-
-
-# STORAGES = {
-#    "default": {
-#        "BACKEND": "storages.backends.s3boto3.S3Boto3Storage",
-#        "OPTIONS": {
-#            "location": "",
-#        },
-#    },
-#     "staticfiles": {
-#        "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",  # This uses the default storage backend for static files
-#    },
-# }
 
 
 

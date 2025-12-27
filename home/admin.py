@@ -1,8 +1,16 @@
 from django.contrib import admin
-from .models import ClipRequest,Clip,VideoDetail
+from .models import ClipRequest,Clip,VideoDetail,User
 
 
 # Register your models here.
+
+@admin.register(User)
+class UserAdmin(admin.ModelAdmin):
+    list_display = ["email","username","phone","created_at"]
+    search_fields = ["id",'email', 'username']
+    ordering = ['-created_at']
+    list_per_page = 10
+    list_max_show_all = 100
 
 @admin.register(Clip)
 class ClipAdmin(admin.ModelAdmin):

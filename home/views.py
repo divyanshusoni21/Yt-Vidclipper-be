@@ -2,22 +2,23 @@ import os
 
 from django.http import  FileResponse
 from django.db import transaction
-from django.conf import settings
 from yt_helper.settings import logger
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 
-from .models import ClipRequest, STATUS_CHOICES, Clip
+from .models import ClipRequest, STATUS_CHOICES, Clip,User
 from .tasks import get_task_status
-from .serializers import ClipRequestSerializer
+from .serializers import ClipRequestSerializer,UserSerializer
 from .services import ClipProcessingService
 
 from utility.functions import runSerializer
+from utility.variables import defaultPassword
 import django_rq
 import traceback
 from threading import Thread
+from utility.functions import sendMail
 
 
 
@@ -121,6 +122,66 @@ class ClipRequestViewSet(viewsets.ModelViewSet):
             return Response({
                 'error': 'Failed to get task status',
                 'details': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=False, methods=['get'])   
+    def send_clip_to_email(self,request):
+        """
+        Send email to the user with the clip request details
+        """
+        try:
+            email = request.GET.get('email')
+
+            user = request.user
+
+            clipRequestId = request.GET.get('clip_request_id')
+            if not clipRequestId:
+                raise Exception('clip_request_id  is required')
+            
+            clipRequest = ClipRequest.objects.get(id=clipRequestId)
+            if not clipRequest:
+                raise Exception(f"Clip request not found: {clipRequestId}")
+
+            if not email :
+                if not user.is_authenticated:
+                    raise Exception('User email is required')
+
+                email = user.email
+            
+            if not clipRequest.user: 
+            
+                if not user.is_authenticated :
+                    user = User.objects.filter(email__iexact=email).first()
+                    
+                    if not user:
+                        # Create user without password
+                        user = User(
+                            username=email.split('@')[0],
+                            email=email,
+                            is_verified=True,
+                        )
+                        user.set_password(defaultPassword)
+                        user.save()
+
+                clipRequest.user = user
+                clipRequest.save(update_fields=['user'])
+            
+            # send email to the user with the clip request details
+            clipRequestSerializedData = ClipRequestSerializer(clipRequest,context={'request': request}).data
+            
+            email_body = {
+                "clip_request": clipRequestSerializedData,
+                'type': 'get_clips'
+            }
+            
+            sendMail(email_body, email, subject='Your clip request is ready')
+            
+            return Response({"success": "Email sent successfully"}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.error(traceback.format_exc())
+            return Response({
+                'error': str(e)
             }, status=status.HTTP_400_BAD_REQUEST)
 
 

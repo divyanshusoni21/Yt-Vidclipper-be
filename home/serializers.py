@@ -1,10 +1,15 @@
-import re
 from rest_framework import serializers
-from django.core.exceptions import ValidationError
+
 from utility.mixins import FieldMixin
-from .models import ClipRequest, ClipAnalytics, VideoDetail, Clip
+from .models import ClipRequest,  VideoDetail, Clip,User
 from utility.functions import time_to_seconds
 
+
+class UserSerializer(FieldMixin,serializers.ModelSerializer):
+
+    class Meta :
+        model = User
+        exclude = ["password","is_staff","is_superuser","groups"]
 
 
 

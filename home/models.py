@@ -67,7 +67,7 @@ class VideoDetail(UUIDMixin):
 
 class ClipRequest(UUIDMixin):
 
-    user = models.ForeignKey(User, on_delete=models.CASCADE,null=True,blank=True)
+    user = models.ForeignKey(User, on_delete=models.SET_NULL,null=True,blank=True)
     youtube_url = models.URLField()
     start_time = models.TimeField()  
     end_time = models.TimeField()    
