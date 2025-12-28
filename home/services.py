@@ -51,7 +51,7 @@ class VideoInfoService:
             InvalidUrlException: If the URL is invalid
             VideoNotAvailableException: If the video is not accessible
         """
-        if not self.validateYoutubeUrl(url):
+        if not self.validate_youtube_url(url):
             raise InvalidUrlException(f"Invalid YouTube URL: {url}")
         
         ydlOpts = ydlOpts or self.ydl_opts
@@ -413,4 +413,148 @@ class ClipProcessingService:
         except Exception as e:
             logger.error(f"Failed to log processing step for request {clipRequest.id}: {str(e)}")
 
+
+class SpeedEditService:
+    """Service for processing speed edit requests"""
+    
+    def __init__(self):
+        self._check_ffmpeg()
+    
+    def _check_ffmpeg(self):
+        """Checks if ffmpeg is installed"""
+        if not shutil.which("ffmpeg"):
+            raise FileNotFoundError("ffmpeg is not installed or not in your system's PATH")
+    
+    def process_speed_edit_request(self, speedEditRequest) -> bool:
+        """
+        Process a speed edit request from either uploaded video or existing clip.
+        
+        Args:
+            speedEditRequest: SpeedEditRequest model instance
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            tStart = time()
+            logger.info(f"Starting speed edit processing for request {speedEditRequest.id}")
+            
+            # Get source video path
+            sourcePath = speedEditRequest.get_source_path()
+            if not sourcePath or not os.path.exists(sourcePath):
+                raise ProcessingFailedException("Source video not found")
+            
+            # Get original file info
+            originalSizeBytes = os.path.getsize(sourcePath)
+            speedEditRequest.original_size = round(originalSizeBytes / (1024 * 1024), 2)
+            
+            # Get original duration using ffprobe
+            originalDuration = self._get_video_duration(sourcePath)
+            speedEditRequest.original_duration = originalDuration
+            speedEditRequest.save(update_fields=['original_size', 'original_duration'])
+            
+            # Create output directory
+            outputDir = os.path.join(settings.MEDIA_ROOT, 'speed_edited_videos', str(speedEditRequest.id))
+            os.makedirs(outputDir, exist_ok=True)
+            
+            # Generate output filename
+            speedStr = str(speedEditRequest.speed_factor).replace('.', '_')
+            outputFilename = f"speed_{speedStr}x.mp4"
+            outputPath = os.path.join(outputDir, outputFilename)
+            
+            # Build FFmpeg command
+            speedFactor = speedEditRequest.speed_factor
+            
+            # Video filter: setpts = 1/speed * PTS
+            videoFilter = f"setpts={1/speedFactor}*PTS"
+            
+            # Audio filter: chain atempo for speeds outside 0.5-2.0 range
+            audioFilters = []
+            remainingSpeed = speedFactor
+            
+            while remainingSpeed > 2.0:
+                audioFilters.append("atempo=2.0")
+                remainingSpeed /= 2.0
+            while remainingSpeed < 0.5:
+                audioFilters.append("atempo=0.5")
+                remainingSpeed /= 0.5
+            
+            # Add the final/remaining factor
+            if abs(remainingSpeed - 1.0) > 0.01:  # Skip if practically 1.0
+                audioFilters.append(f"atempo={remainingSpeed}")
+            
+            audioFilterChain = ",".join(audioFilters) if audioFilters else "atempo=1.0"
+            
+            ffmpegCmd = [
+                'ffmpeg',
+                '-i', sourcePath,
+                '-filter_complex', f'[0:v]{videoFilter}[v];[0:a]{audioFilterChain}[a]',
+                '-map', '[v]',
+                '-map', '[a]',
+                '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+                '-c:a', 'aac',
+                '-y',
+                outputPath
+            ]
+            
+            logger.info(f"Running FFmpeg command: {' '.join(ffmpegCmd)}")
+            
+            # Execute FFmpeg
+            subprocess.run(
+                ffmpegCmd,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=600  # 10 minute timeout
+            )
+            
+            # Verify output
+            if not os.path.exists(outputPath) or os.path.getsize(outputPath) == 0:
+                raise ProcessingFailedException("Output video is empty or missing")
+            
+            # Get output file info
+            outputSizeBytes = os.path.getsize(outputPath)
+            outputSizeMb = round(outputSizeBytes / (1024 * 1024), 2)
+            outputDuration = int(originalDuration / speedFactor)
+            
+            # Save output file to model
+            with open(outputPath, 'rb') as f:
+                speedEditRequest.output_video.save(outputFilename, File(f), save=False)
+            
+            # Update model
+            tEnd = time()
+            speedEditRequest.output_size = outputSizeMb
+            speedEditRequest.output_duration = outputDuration
+            speedEditRequest.processing_time = round(tEnd - tStart, 2)
+            speedEditRequest.status = STATUS_CHOICES[1][0]  # completed
+            speedEditRequest.save()
+            
+            logger.info(f"Speed edit completed for request {speedEditRequest.id} in {tEnd - tStart:.2f}s")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Speed edit failed for request {speedEditRequest.id}: {str(e)}")
+            logger.error(traceback.format_exc())
+            
+            speedEditRequest.status = STATUS_CHOICES[2][0]  # failed
+            speedEditRequest.error_message = str(e)
+            speedEditRequest.save(update_fields=['status', 'error_message'])
+            return False
+    
+    def _get_video_duration(self, videoPath: str) -> int:
+        """Get video duration in seconds using ffprobe"""
+        try:
+            cmd = [
+                'ffprobe',
+                '-v', 'error',
+                '-show_entries', 'format=duration',
+                '-of', 'default=noprint_wrappers=1:nokey=1',
+                videoPath
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            duration = float(result.stdout.strip())
+            return int(duration)
+        except Exception as e:
+            logger.warning(f"Failed to get video duration: {str(e)}")
+            return 0
 

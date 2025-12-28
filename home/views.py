@@ -8,17 +8,17 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 
-from .models import ClipRequest, STATUS_CHOICES,User,Clip
+from .models import ClipRequest, STATUS_CHOICES,User,Clip, SpeedEditRequest
 from .tasks import get_task_status
-from .serializers import ClipRequestSerializer
-from .services import ClipProcessingService
+from .serializers import ClipRequestSerializer, SpeedEditRequestSerializer
+from .services import ClipProcessingService, SpeedEditService
 
 from utility.functions import runSerializer
 from utility.variables import defaultPassword
 import django_rq
 import traceback
 from threading import Thread
-from utility.functions import sendMail
+from utility.functions import sendMail,format_validation_errors
 
 
 
@@ -282,3 +282,102 @@ class DownloadClipViewSet(viewsets.ViewSet):
         
         filename = f"{video_title}_{resolution}_{start_time_str}-{end_time_str}.mp4"
         return filename
+
+
+class SpeedEditViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for speed editing service
+    Allows users to upload videos or select existing clips and adjust playback speed
+    """
+    queryset = SpeedEditRequest.objects.all()
+    serializer_class = SpeedEditRequestSerializer
+    permission_classes = [AllowAny]  # Adjust based on your auth requirements
+    
+    @transaction.atomic
+    def create(self, request, *args, **kwargs):
+        """
+        Create a new speed edit request
+        """
+        try:
+            logger.info(f"Creating speed edit request with data: {request.data}")
+
+            uploadedVideo = request.data.get('uploaded_video')
+            sourceClip = request.data.get('source_clip')
+
+            if not uploadedVideo and not sourceClip:
+                raise Exception(
+                    "Either 'uploaded_video' or 'source_clip' must be provided"
+                )
+        
+            if uploadedVideo and sourceClip:
+                raise Exception(
+                    "Provide either 'uploaded_video' or 'source_clip', not both"
+                )
+            
+            # Validate speed factor
+            speed_factor = float(request.data.get('speed_factor'))
+            if speed_factor is not None:
+                if speed_factor <= 0:
+                    raise Exception('Speed factor must be positive')
+                if speed_factor < 0.25 or speed_factor > 4.0:
+                    raise Exception('Speed factor must be between 0.25x and 4.0x')
+            
+            # If source_clip_id provided, verify it exists and map to source_clip
+            if sourceClip:
+                sourceClip = Clip.objects.filter(id=sourceClip).first()
+                if not sourceClip:
+                    raise Exception(f'Clip not found : {sourceClip}')
+
+
+
+            requestData = request.data.copy()
+            requestData["is_active"] = True
+            # Create the speed edit request
+            speedEditRequest, serializer = runSerializer(
+                SpeedEditRequestSerializer,
+                requestData,
+                request=request
+            )
+            
+            # Set user if authenticated
+            if request.user.is_authenticated:
+                speedEditRequest.user = request.user
+                speedEditRequest.save(update_fields=['user'])
+            
+            # Process in background thread
+            speedEditService = SpeedEditService()
+            thread = Thread(target=speedEditService.process_speed_edit_request, args=(speedEditRequest,))
+            thread.start()
+            
+            responseData = SpeedEditRequestSerializer(speedEditRequest, context={'request': request}).data
+            
+            return Response(responseData, status=status.HTTP_201_CREATED)
+            
+        except Exception as e:
+            e = format_validation_errors(e,self.get_exception_handler_context())
+            logger.error(traceback.format_exc())
+            return Response({
+                'error': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=False, methods=['get'])
+    def status(self, request):
+        """Get status of a speed edit request"""
+        try:
+            requestId = request.query_params.get('request_id')
+            if not requestId:
+                raise Exception('request_id parameter is required')
+            
+            speedEditRequest = SpeedEditRequest.objects.filter(id=requestId).first()
+            if not speedEditRequest:
+                raise Exception(f"Speed edit request not found: {requestId}")
+
+            serializer = SpeedEditRequestSerializer(speedEditRequest, context={'request': request})
+            return Response(serializer.data)
+            
+        except Exception as e:
+            logger.error(traceback.format_exc())
+            return Response({
+                'error': 'Failed to get status',
+                'details': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)

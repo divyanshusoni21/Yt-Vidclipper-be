@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import ClipRequest,Clip,VideoDetail,User
+from .models import ClipRequest,Clip,VideoDetail,User,SpeedEditRequest
 
 
 # Register your models here.
@@ -52,3 +52,14 @@ class ClipRequestAdmin(admin.ModelAdmin):
     list_select_related = ['video_info']
     inlines = [ClipInline]
  
+
+@admin.register(SpeedEditRequest)
+class SpeedEditRequestAdmin(admin.ModelAdmin):
+    list_display = ['uploaded_video', 'source_clip', 'speed_factor', 'status', 'output_video', 'created_at']
+    list_filter = ['status','speed_factor' ]
+    search_fields = ['id',  'source_clip__id']
+    ordering = ['-created_at']
+    list_per_page = 10
+    list_max_show_all = 100
+    list_display_links = ['uploaded_video','source_clip']
+    list_select_related = ['source_clip']

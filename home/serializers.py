@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
 from utility.mixins import FieldMixin
-from .models import ClipRequest,  VideoDetail, Clip,User
+from .models import ClipRequest,  VideoDetail, Clip,User, SpeedEditRequest
 from utility.functions import time_to_seconds
 
 
@@ -105,4 +105,22 @@ class ClipRequestSerializer(FieldMixin, serializers.ModelSerializer):
             data["video_info"] = VideoDetailSerializer(instance.video_info).data
 
         return data
+
+
+class SpeedEditRequestSerializer(FieldMixin, serializers.ModelSerializer):
+    """Serializer for SpeedEditRequest with validation"""
+    
+    class Meta:
+        model = SpeedEditRequest
+        fields = '__all__'
+    
+    def to_representation(self, instance):
+        """
+        Customize the serialized representation
+        """
+        data = super().to_representation(instance)
+        if "source_clip" in data and data["source_clip"] is not None:
+            data["source_clip"] = ClipSerializer(instance.source_clip,context=self.context).data
+        return data
+
     
