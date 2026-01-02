@@ -183,6 +183,9 @@ class SpeedEditRequest(UUIDMixin):
     original_size = models.FloatField(null=True, blank=True)
     processing_time = models.FloatField(null=True, blank=True, help_text="Time taken in seconds")
     error_message = models.TextField(null=True, blank=True)
+
+    # Background job ID
+    rq_job_id = models.CharField(max_length=255, null=True, blank=True)
     
     class Meta:
         db_table = 'speed_edit_request'

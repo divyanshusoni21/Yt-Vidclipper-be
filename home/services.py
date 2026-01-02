@@ -205,11 +205,13 @@ class ClipProcessingService:
             
             with yt_dlp.YoutubeDL(ydl_opts_step1) as ydl:
                 info = ydl.extract_info(clipRequest.youtube_url, download=True)
+                
                 out720pPathActual = ydl.prepare_filename(info)
+       
                 
                 # --- Create/Update VideoDetail object ---
                 video_id = info.get('id', '')
-                video_duration = info.get('duration', 0)
+                video_duration = info.get('duration', None)
                 video_title = info.get('title', '')
                 channel_name = info.get('channel', '')
                 channel_id = info.get('channel_id', '')
@@ -235,11 +237,13 @@ class ClipProcessingService:
                 clipRequest.clip_duration = clipDurationSeconds
                 
                 # Handle duration checks (cleanup logic)
-                if endSec > video_duration:
+                if video_duration is not None and endSec > video_duration:
                      # If user requested time beyond video length, update DB to reflect reality
                      # yt-dlp automatically clipped to end
-                     clipRequest.end_time = info.get('duration_string', str(video_duration))
                 
+                     clipRequest.end_time = info.get('duration_string', str(video_duration))
+
+
                 clipRequest.save(update_fields=['video_info', 'clip_duration', 'end_time'])
             
             # Verify output file exists and has content
@@ -418,6 +422,7 @@ class SpeedEditService:
         if not shutil.which("ffmpeg"):
             raise FileNotFoundError("ffmpeg is not installed or not in your system's PATH")
     
+    @job('default', timeout='5m')
     def process_speed_edit_request(self, speedEditRequest) -> bool:
         """
         Process a speed edit request from either uploaded video or existing clip.

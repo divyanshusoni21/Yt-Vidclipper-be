@@ -9,7 +9,6 @@ from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 
 from .models import ClipRequest, STATUS_CHOICES,User,Clip, SpeedEditRequest
-from .tasks import get_task_status
 from .serializers import ClipRequestSerializer, SpeedEditRequestSerializer
 from .services import ClipProcessingService, SpeedEditService
 
@@ -68,19 +67,20 @@ class ClipRequestViewSet(viewsets.ModelViewSet):
             
             try:
                 
-                # TODO: Queue background processing task
-                # queue = django_rq.get_queue('default')
-                # rqJob = queue.enqueue(clipProcessingService.process_clip_request, clipRequest)
+                # # TODO: Queue background processing task
+                queue = django_rq.get_queue('default')
+                rqJob = queue.enqueue(clipProcessingService.process_clip_request, clipRequest)
                 
-                # jobId = rqJob.id
+                jobId = rqJob.id
                 # logger.info(f"Queued background processing for clip request {clipRequest.id}, job ID: {jobId}")
                 
-                # # Add job_id to response for tracking
-                # clipRequest.rq_job_id = jobId
-                # clipRequest.save(update_fields=['rq_job_id'])
+                # # # Add job_id to response for tracking
+                clipRequest.rq_job_id = jobId
+                clipRequest.save(update_fields=['rq_job_id'])
 
-                thread = Thread(target=clipProcessingService.process_clip_request, args=(clipRequest,))
-                thread.start()
+                # thread = Thread(target=clipProcessingService.process_clip_request, args=(clipRequest,))
+                # thread.start()
+
                 responseData = ClipRequestSerializer(clipRequest,context={'request': request}).data
                 
                 return Response(responseData, status=status.HTTP_201_CREATED)
@@ -109,7 +109,6 @@ class ClipRequestViewSet(viewsets.ModelViewSet):
             if not clipRequestId:
                 raise Exception('clip_request_id parameter is required')
             
-
             clipRequest = ClipRequest.objects.get(id=clipRequestId)
             if not clipRequest:
                 raise Exception(f"Clip request not found: {clipRequestId}")
@@ -346,8 +345,15 @@ class SpeedEditViewSet(viewsets.ModelViewSet):
             
             # Process in background thread
             speedEditService = SpeedEditService()
-            thread = Thread(target=speedEditService.process_speed_edit_request, args=(speedEditRequest,))
-            thread.start()
+
+            queue = django_rq.get_queue('default')
+            rqJob = queue.enqueue(speedEditService.process_speed_edit_request, speedEditRequest)
+            jobId = rqJob.id
+            speedEditRequest.rq_job_id = jobId
+            speedEditRequest.save(update_fields=['rq_job_id'])
+
+            # thread = Thread(target=speedEditService.process_speed_edit_request, args=(speedEditRequest,))
+            # thread.start()
             
             responseData = SpeedEditRequestSerializer(speedEditRequest, context={'request': request}).data
             
