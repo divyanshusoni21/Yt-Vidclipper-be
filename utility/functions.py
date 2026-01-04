@@ -6,7 +6,7 @@ import tempfile
 import os
 
 from django.conf import settings
-import boto3
+# import boto3
 from rest_framework import exceptions
 from rest_framework.views import  exception_handler
 from rest_framework.exceptions import ValidationError
@@ -69,26 +69,26 @@ def delete_temporary_file(tempFile):
     tempFile.close()
     os.remove(tempFile.name)
 
-def generate_s3_presigned_object_url(s3ObjectKey,s3ObjectExpirationTimeInSeconds,download=False):
-    s3BucketName = settings.AWS_STORAGE_BUCKET_NAME
+# def generate_s3_presigned_object_url(s3ObjectKey,s3ObjectExpirationTimeInSeconds,download=False):
+#     s3BucketName = settings.AWS_STORAGE_BUCKET_NAME
 
-    s3Client = boto3.client('s3',aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-                    aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-                    region_name=settings.AWS_S3_REGION_NAME)
+#     s3Client = boto3.client('s3',aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+#                     aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+#                     region_name=settings.AWS_S3_REGION_NAME)
 
-    # Generate the pre-signed URL
+#     # Generate the pre-signed URL
    
-    params = {'Bucket': s3BucketName, 'Key': s3ObjectKey}
-    if download :
-        params['ResponseContentDisposition']= 'attachment'
+#     params = {'Bucket': s3BucketName, 'Key': s3ObjectKey}
+#     if download :
+#         params['ResponseContentDisposition']= 'attachment'
     
-    presignedUrl = s3Client.generate_presigned_url(
-        'get_object',
-        Params=params,
-        ExpiresIn=s3ObjectExpirationTimeInSeconds,  # Expiration time in seconds 
+#     presignedUrl = s3Client.generate_presigned_url(
+#         'get_object',
+#         Params=params,
+#         ExpiresIn=s3ObjectExpirationTimeInSeconds,  # Expiration time in seconds 
         
-    )
-    return presignedUrl
+#     )
+#     return presignedUrl
 
 
 def format_validation_errors(exception: Exception, context: dict) :

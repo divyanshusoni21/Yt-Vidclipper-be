@@ -31,7 +31,7 @@ SECRET_KEY = os.environ.get("SECRET_KEY", "")
 DEBUG = os.environ.get("DEBUG", False)
 
 
-ALLOWED_HOSTS = ["127.0.0.1"]
+ALLOWED_HOSTS = ["127.0.0.1","64.227.185.227"]
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 
@@ -52,7 +52,7 @@ INSTALLED_APPS = [
     'django_extensions',
     'django_rq',
 
-    "storages"
+    # "storages",
 ]
 
 MIDDLEWARE = [
@@ -288,21 +288,3 @@ RQ_QUEUES = {
         'DEFAULT_TIMEOUT': 1000,
     }
 }
-
-# File handling configuration for YouTube clipper
-CLIP_STORAGE_ROOT = os.path.join(MEDIA_ROOT, 'clips')
-TEMP_STORAGE_ROOT = os.path.join(MEDIA_ROOT, 'temp')
-
-# Ensure clip storage directories exist
-if not os.path.exists(CLIP_STORAGE_ROOT):
-    os.makedirs(CLIP_STORAGE_ROOT)
-    
-if not os.path.exists(TEMP_STORAGE_ROOT):
-    os.makedirs(TEMP_STORAGE_ROOT)
-
-# Maximum file size for clips (in bytes) - 500MB
-MAX_CLIP_FILE_SIZE = 500 * 1024 * 1024
-
-# Cleanup settings
-CLIP_RETENTION_HOURS = int(os.environ.get('CLIP_RETENTION_HOURS', 24))  # Keep clips for 24 hours by default
-TEMP_FILE_RETENTION_HOURS = int(os.environ.get('TEMP_FILE_RETENTION_HOURS', 1))  # Keep temp files for 1 hour
