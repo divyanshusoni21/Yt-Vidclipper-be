@@ -57,6 +57,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'corsheaders.middleware.CorsMiddleware',#cors setting
     'django.middleware.gzip.GZipMiddleware', # for text compression (reduces the response size of apis)
@@ -211,6 +212,9 @@ SIMPLE_JWT = {
 
 
 FILE_UPLOAD_MAX_MEMORY_SIZE = 20 * 1024 * 1024 # 20 Mb limit
+YTDLP_COOKIES_PATH = os.environ.get("YTDLP_COOKIES_PATH", str(BASE_DIR / 'cookies.txt'))
+if not os.path.exists(YTDLP_COOKIES_PATH):
+    YTDLP_COOKIES_PATH = None
 
 
 

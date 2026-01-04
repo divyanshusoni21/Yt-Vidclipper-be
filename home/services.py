@@ -55,6 +55,14 @@ class VideoInfoService:
             raise InvalidUrlException(f"Invalid YouTube URL: {url}")
         
         ydlOpts = ydlOpts or self.ydl_opts
+        if settings.YTDLP_COOKIES_PATH:
+            ydlOpts['cookiefile'] = settings.YTDLP_COOKIES_PATH
+        
+        # Additional options to help avoid bot detection
+        ydlOpts.update({
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'referer': 'https://www.youtube.com/',
+        })
             
         try:
             with yt_dlp.YoutubeDL(ydlOpts) as ydl:
@@ -202,6 +210,9 @@ class ClipProcessingService:
                 'no_warnings': True,
                 'extract_flat': False,
             }
+            
+            if settings.YTDLP_COOKIES_PATH:
+                ydl_opts_step1['cookiefile'] = settings.YTDLP_COOKIES_PATH
             
             with yt_dlp.YoutubeDL(ydl_opts_step1) as ydl:
                 info = ydl.extract_info(clipRequest.youtube_url, download=True)

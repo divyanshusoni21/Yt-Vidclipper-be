@@ -81,3 +81,5 @@ venv/
 venv2/
 env/
 *.pyc
+
+cookies.txt
