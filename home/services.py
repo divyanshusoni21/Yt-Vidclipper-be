@@ -54,12 +54,7 @@ class VideoInfoService:
         if not self.validate_youtube_url(url):
             raise InvalidUrlException(f"Invalid YouTube URL: {url}")
         
-        ydlOpts = ydlOpts or self.ydl_opts
-        if settings.YTDLP_COOKIES_PATH:
-            ydlOpts['cookiefile'] = settings.YTDLP_COOKIES_PATH
-        
 
-            
         try:
             with yt_dlp.YoutubeDL(ydlOpts) as ydl:
                 logger.info(f"Extracting video info for URL: {url}")
@@ -205,17 +200,17 @@ class ClipProcessingService:
                 'overwrites': True,
                 'no_warnings': True,
                 'extract_flat': False,
-
+                 #  Disable Cache (Be a "new" user every time)
+                'cachedir': False,
+                
+                #  Rotate Clients (iOS is currently the most reliable)
                 'extractor_args': {
                     'youtube': {
-                        'player_client': ['android','web'] 
+                        'player_client': ['ios', 'android', 'web'] 
                     }
-                },
+                }
             }
-            
-            if settings.YTDLP_COOKIES_PATH:
-                ydl_opts_step1['cookiefile'] = settings.YTDLP_COOKIES_PATH
-            
+
             with yt_dlp.YoutubeDL(ydl_opts_step1) as ydl:
                 info = ydl.extract_info(clipRequest.youtube_url, download=True)
                 
