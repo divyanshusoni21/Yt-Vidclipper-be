@@ -201,16 +201,17 @@ class ClipProcessingService:
                 'no_warnings': True,
                 'extract_flat': False,
                 'force_ipv6': True,
-                 #  Disable Cache (Be a "new" user every time)
-                'cachedir': False,
+                'cachedir': '/var/www/yt-dlp-cache',
                 
                 #  Rotate Clients (iOS is currently the most reliable)
                 'extractor_args': {
                     'youtube': {
-                        'player_client': ['ios', 'android', 'web'] 
+                        'player_client': [ 'web','android'] 
                     }
                 }
             }
+            if settings.YTDLP_COOKIES_PATH:
+                ydl_opts_step1['cookiefile'] = settings.YTDLP_COOKIES_PATH
 
             with yt_dlp.YoutubeDL(ydl_opts_step1) as ydl:
                 info = ydl.extract_info(clipRequest.youtube_url, download=True)
