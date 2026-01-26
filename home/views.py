@@ -347,7 +347,7 @@ class SpeedEditViewSet(viewsets.ModelViewSet):
 
 
 
-            requestData = request.data
+            requestData = request.data.copy()
             requestData["is_active"] = True
             # Create the speed edit request
             speedEditRequest, serializer = runSerializer(
