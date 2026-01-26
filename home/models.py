@@ -79,7 +79,7 @@ class ClipRequest(UUIDMixin):
     total_time_taken = models.IntegerField(null=True, blank=True)
     processing_log = models.JSONField(default=dict, blank=True)  # Stores detailed processing steps and errors
     rq_job_id = models.CharField(max_length=255, null=True, blank=True)
-    
+    proxy = models.CharField(max_length=255, null=True, blank=True)
     class Meta:
         db_table = 'clip_request'
         ordering = ['-created_at']

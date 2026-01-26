@@ -194,7 +194,8 @@ BREVO_API_KEY = os.environ.get("BREVO_API_KEY","")
 RAPIDAPI_KEY = os.environ.get("RAPIDAPI_KEY","")
 DEFAULT_PASSWORD = os.environ.get("DEFAULT_PASSWORD")
 
-
+PROXIES = os.environ.get("PROXIES", "").split(",")
+COOKIES_FILE = os.environ.get("COOKIES_FILE", "")
 REST_FRAMEWORK = {
 
     'DEFAULT_AUTHENTICATION_CLASSES': (
