@@ -197,16 +197,29 @@ class DownloadClipViewSet(viewsets.ViewSet):
         """
         try:
             logger.info(f"Download request for clip {pk}")
-            
-            # Get the clip object
-            try:
-                clip = Clip.objects.get(id=pk)
-            except Clip.DoesNotExist:
-                raise Exception(f"Clip request not found: {pk}")
-            
+            fileType = request.query_params.get('file_type','clip')
 
-            # Get full file path
-            fullFilePath = clip.clip.path
+            
+            if fileType.lower() not in ["clip","speed_edit"]:
+                raise Exception(f"Invalid file type: {fileType}")
+            
+            fileObj = None
+            fullFilePath = ""
+            if fileType == "clip":
+                # Get the clip object
+                try:
+                    fileObj = Clip.objects.get(id=pk)
+                    fullFilePath = fileObj.clip.path
+                except Clip.DoesNotExist:
+                    raise Exception(f"Clip request not found: {pk}")
+            elif fileType == "speed_edit":
+                # Get the speed edit object
+                try:
+                    fileObj = SpeedEditRequest.objects.get(id=pk)
+                    fullFilePath = fileObj.output_video.path
+                except SpeedEditRequest.DoesNotExist:
+                    raise Exception(f"Speed edit request not found: {pk}")
+
             
             # Validate file existence
             if not os.path.exists(fullFilePath):
@@ -214,15 +227,15 @@ class DownloadClipViewSet(viewsets.ViewSet):
                 
             # Validate file size
             try:
-                file_size = os.path.getsize(fullFilePath)
-                if file_size == 0:
+                fileSize = os.path.getsize(fullFilePath)
+                if fileSize == 0:
                     raise Exception(f"Empty file found: {fullFilePath}")
                     
             except OSError as e:
                 raise Exception(f"Error accessing file {fullFilePath}: {str(e)}")
             
             # Generate appropriate filename
-            filename = self._generate_download_filename(clip)
+            filename = self._generate_download_filename(fileObj,fileType)
             
             try:
                 # Create file response with proper headers
@@ -234,7 +247,7 @@ class DownloadClipViewSet(viewsets.ViewSet):
                 )
                 
                 # Add additional security headers
-                response['Content-Length'] = file_size
+                response['Content-Length'] = fileSize
                 response['Cache-Control'] = 'no-cache, no-store, must-revalidate'
                 response['Pragma'] = 'no-cache'
                 response['Expires'] = '0'
@@ -243,7 +256,7 @@ class DownloadClipViewSet(viewsets.ViewSet):
                 response['Access-Control-Allow-Origin'] = '*'
                 response['Access-Control-Expose-Headers'] = 'Content-Disposition'
                 
-                logger.info(f"Successfully serving file {filename} for clip {pk} at resolution {clip.resolution}")
+                logger.info(f"SuccessfulS serving file {filename}, id : {pk} ")
                        
                 return response
                 
@@ -258,29 +271,34 @@ class DownloadClipViewSet(viewsets.ViewSet):
                 'details': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
-    def _generate_download_filename(self, clip):
+    def _generate_download_filename(self, clip,fileType:str="clip"):
         """
         Generate download filename based on clip request and clip resolution
         """
-        clipRequest = clip.clip_request
-        video_title = 'clip'
-        if clipRequest.video_info and clipRequest.video_info.video_title:
-            # Sanitize video title for filename
-            video_title = clipRequest.video_info.video_title
-            # Remove invalid filename characters
-            invalid_chars = '<>:"/\\|?*'
-            for char in invalid_chars:
-                video_title = video_title.replace(char, '_')
-            # Limit length
-            if len(video_title) > 50:
-                video_title = video_title[:50]
-        
-        resolution = clip.resolution or 'unknown'
-        start_time_str = str(clipRequest.start_time).replace(':', '-')
-        end_time_str = str(clipRequest.end_time).replace(':', '-')
-        
-        filename = f"{video_title}_{resolution}_{start_time_str}-{end_time_str}.mp4"
-        return filename
+        if fileType == "clip":
+            clipRequest = clip.clip_request
+            video_title = 'clip'
+            if clipRequest.video_info and clipRequest.video_info.video_title:
+                # Sanitize video title for filename
+                video_title = clipRequest.video_info.video_title
+                # Remove invalid filename characters
+                invalid_chars = '<>:"/\\|?*'
+                for char in invalid_chars:
+                    video_title = video_title.replace(char, '_')
+                # Limit length
+                if len(video_title) > 50:
+                    video_title = video_title[:50]
+            resolution = clip.resolution or '720p'
+
+            fileName = f"{video_title}_{resolution}.mp4"
+
+        elif fileType == "speed_edit":
+            speedEditRequest = clip
+            video_title = 'speed_edit'
+            speed_factor = speedEditRequest.speed_factor
+            fileName = f"{video_title}_{speed_factor}x.mp4"
+
+        return fileName
 
 
 class SpeedEditViewSet(viewsets.ModelViewSet):
@@ -329,7 +347,7 @@ class SpeedEditViewSet(viewsets.ModelViewSet):
 
 
 
-            requestData = request.data.copy()
+            requestData = request.data
             requestData["is_active"] = True
             # Create the speed edit request
             speedEditRequest, serializer = runSerializer(
