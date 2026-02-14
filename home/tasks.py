@@ -2,13 +2,34 @@
 Background tasks for YouTube clipper processing using Django-RQ.
 """
 import os
-import logging
+import shutil
+from yt_helper.settings import logger
 from django.conf import settings
 from django_rq import job
 from .models import ClipRequest
 
-logger = logging.getLogger('django')
 
+def cleanup_cancelled_task_dir(requestObj, requestType):
+    """
+    Remove partial output directory for a cancelled speed edit request.
+    Safe to call from a delayed job after send_stop_job_command.
+    """
+    try:
+        logger.info(f"Cleaning up partial {requestType} dir for cancelled request {requestObj.id}")
+        if not requestObj or requestObj.status != 'cancelled':
+            return
+        if requestType == 'clip_request':
+            outputDir = os.path.join(settings.MEDIA_ROOT, 'clips', str(requestObj.id))
+        elif requestType == 'speed_edit':
+            outputDir = os.path.join(settings.MEDIA_ROOT, 'speed_edited_videos', str(requestObj.id))
+        else:
+            raise Exception('Invalid request type')
+
+        if os.path.isdir(outputDir):
+            shutil.rmtree(outputDir, ignore_errors=False)
+            logger.info(f"Cleaned up partial {requestType} dir for cancelled request {requestObj.id}")
+    except Exception as e:
+        logger.error(f"Cleanup cancelled {requestType} dir failed for {requestObj.id}: {e}")
 
 
 @job('low', timeout=600)  # 10 minute timeout for bulk cleanup

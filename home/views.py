@@ -3,7 +3,7 @@ import os
 from django.http import  FileResponse
 from django.db import transaction
 from yt_helper.settings import logger
-from rest_framework import viewsets, status
+from rest_framework import viewsets, status, generics
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
@@ -16,8 +16,13 @@ from utility.functions import runSerializer
 from utility.variables import defaultPassword
 import django_rq
 import traceback
-from threading import Thread
+from datetime import timedelta
 from utility.functions import sendMail,format_validation_errors
+from rq.job import Job
+from rq.command import send_stop_job_command
+from rq.exceptions import InvalidJobOperation
+
+from .tasks import cleanup_cancelled_task_dir
 
 
 
@@ -67,7 +72,6 @@ class ClipRequestViewSet(viewsets.ModelViewSet):
             
             try:
                 
-                # # TODO: Queue background processing task
                 queue = django_rq.get_queue('default')
                 rqJob = queue.enqueue(clipProcessingService.process_clip_request, clipRequest)
                 
@@ -77,9 +81,6 @@ class ClipRequestViewSet(viewsets.ModelViewSet):
                 # # # Add job_id to response for tracking
                 clipRequest.rq_job_id = jobId
                 clipRequest.save(update_fields=['rq_job_id'])
-
-                # thread = Thread(target=clipProcessingService.process_clip_request, args=(clipRequest,))
-                # thread.start()
 
                 responseData = ClipRequestSerializer(clipRequest,context={'request': request}).data
                 
@@ -411,3 +412,74 @@ class SpeedEditViewSet(viewsets.ModelViewSet):
                 'error': 'Failed to get status',
                 'details': str(e)
             }, status=status.HTTP_400_BAD_REQUEST)
+
+
+class CancelRequestViewSet(generics.GenericAPIView):
+    """
+    Unified cancel API for clip requests and speed edit requests.
+    POST with body: { "request_type": "clip_request" | "speed_edit", "request_id": "<uuid>" }
+    """
+
+    def post(self, request):
+        """
+        Cancel a clip request or speed edit request
+        """
+        
+        try:
+            requestType = request.data.get('request_type')
+            requestId = request.data.get('request_id')
+
+            if not requestType or not requestId:
+                raise Exception('request_type and request_id are required')
+            if requestType not in ('clip_request', 'speed_edit'):
+                raise Exception('Invalid request_type')
+            requestObj = None
+
+            if requestType == 'clip_request':
+                requestObj = ClipRequest.objects.filter(id=requestId).first()
+
+            elif requestType == 'speed_edit':
+                requestObj = SpeedEditRequest.objects.filter(id=requestId).first()
+
+            if not requestObj:
+                raise Exception(f"{requestType} request not found: {requestId}")
+
+            self.cancel_request(requestObj, requestType)
+
+            return Response({'status': 'Request cancelled successfully', 'request_type': requestType}, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.error(traceback.format_exc())
+            return Response({
+                'error': str(e),
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    def cancel_request(self, requestObj, requestType):
+        jobWasRunning = False
+
+        with transaction.atomic():
+            if not requestObj.status == STATUS_CHOICES[0][0]: # pending
+                raise Exception(f'Cannot cancel, {requestType} request is in {requestObj.status.upper()} state')
+            
+            jobId = requestObj.rq_job_id
+            if jobId:
+                redisConn = django_rq.get_connection('default')
+                job = Job.fetch(jobId, connection=redisConn)
+                if job.get_status() == 'started':
+                    try:
+                        send_stop_job_command(redisConn, jobId)
+                        jobWasRunning = True
+                    except InvalidJobOperation:
+                        pass
+                else:
+                    job.cancel()
+                    job.delete()
+                    
+            logger.info(f"Cancelled {requestType} request {requestObj.id}, jobWasRunning: {jobWasRunning}")
+            requestObj.status = STATUS_CHOICES[3][0] # cancelled
+            requestObj.save(update_fields=['status'])
+        
+        if jobWasRunning:
+            queue = django_rq.get_queue('default')
+            # cleanup the task directory after 30 seconds
+            queue.enqueue_in(timedelta(seconds=30), cleanup_cancelled_task_dir, requestObj, requestType)
+        
