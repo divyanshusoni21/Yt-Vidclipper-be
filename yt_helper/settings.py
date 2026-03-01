@@ -47,11 +47,10 @@ INSTALLED_APPS = [
 
     'rest_framework',
     'rest_framework_simplejwt',
-    'corsheaders',#cors setting
+    'corsheaders',
     'django_extensions',
     'django_rq',
 
-    # "storages",
 ]
 
 MIDDLEWARE = [
@@ -138,12 +137,6 @@ USE_I18N = True
 
 USE_TZ = True
 
-
-
-# CSRF_TRUSTED_ORIGINS = [
-
-# ]
-
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_URL = '/static/'
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
@@ -191,16 +184,6 @@ CORS_EXPOSE_HEADERS = [
     'Content-Length',
 ]
 
-# email settings
-EMAIL_USE_TLS = True
-EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
-EMAIL_HOST = os.environ.get("EMAIL_HOST", "")
-EMAIL_PORT = os.environ.get("EMAIL_PORT", "")
-EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
-EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
-DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "")
-
-
 
 ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL","divyanshusoni.relish@gmail.com")
 ADMIN_PHONE = os.environ.get("ADMIN_PHONE","")
@@ -221,7 +204,6 @@ REST_FRAMEWORK = {
 
 }
 
-
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(days=1),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=15),
@@ -229,12 +211,20 @@ SIMPLE_JWT = {
 
 
 FILE_UPLOAD_MAX_MEMORY_SIZE = 50 * 1024 * 1024 # 50 Mb limit
-YTDLP_COOKIES_PATH = os.environ.get("YTDLP_COOKIES_PATH", str(BASE_DIR / 'cookies.txt'))
-if not os.path.exists(YTDLP_COOKIES_PATH):
-    YTDLP_COOKIES_PATH = None
 
+# Redis and Django-RQ Configuration
+REDIS_HOST = os.environ.get('REDIS_HOST', 'localhost')
+REDIS_PORT = os.environ.get('REDIS_PORT', 6379)
+REDIS_DB = os.environ.get('REDIS_DB', 0)
 
-
+RQ_QUEUES = {
+    'default': {
+        'HOST': REDIS_HOST,
+        'PORT': REDIS_PORT,
+        'DB': REDIS_DB,
+        'DEFAULT_TIMEOUT': 360,
+    }
+}
 
 LOGFILES_DIRECTORY_NAME = "log_files"
 
@@ -284,28 +274,3 @@ LOGGING = {
 import logging 
 logger = logging.getLogger('django')
 
-# Redis and Django-RQ Configuration
-REDIS_HOST = os.environ.get('REDIS_HOST', 'localhost')
-REDIS_PORT = os.environ.get('REDIS_PORT', 6379)
-REDIS_DB = os.environ.get('REDIS_DB', 0)
-
-RQ_QUEUES = {
-    'default': {
-        'HOST': REDIS_HOST,
-        'PORT': REDIS_PORT,
-        'DB': REDIS_DB,
-        'DEFAULT_TIMEOUT': 360,
-    },
-    'high': {
-        'HOST': REDIS_HOST,
-        'PORT': REDIS_PORT,
-        'DB': REDIS_DB,
-        'DEFAULT_TIMEOUT': 500,
-    },
-    'low': {
-        'HOST': REDIS_HOST,
-        'PORT': REDIS_PORT,
-        'DB': REDIS_DB,
-        'DEFAULT_TIMEOUT': 1000,
-    }
-}

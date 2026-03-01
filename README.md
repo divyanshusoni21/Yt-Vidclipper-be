@@ -2,64 +2,29 @@
 
 A Django web application that allows users to extract specific segments from YouTube videos by providing a YouTube URL and timestamp range. The system handles video downloading, clipping, and serving the processed clip back to the user for download.
 
+## Postman collection document
+[Click here](https://documenter.getpostman.com/view/18000926/2sBXcHiedL)
+
 ## Features
 
 - Extract clips from YouTube videos using URL and timestamp range
-- Hybrid processing methods for optimal performance based on video duration
 - Background processing with real-time status updates
-- Comprehensive analytics and monitoring
-- REST API with Django REST Framework
-- Simple web interface for easy clip creation
+- Adjust clip playback speed from 0.25x to 4.0x (upload your own video or use a generated clip)
 
-## System Requirements
+## Efficiently Handles :
+- Cancellation of a ongoing process of clip cutting and video playback speed adjustment
+- Cleaning up the media files from directory which are older than 24 hours with a cron job
 
-### Required Software
+## Required Software
 
 - **Python 3.8+** - Programming language runtime
 - **FFmpeg** - Video processing library (required for clipping functionality)
 - **Redis** - In-memory data store (required for background task processing)
 
-### Hardware Requirements
-
-- **Minimum**: 2GB RAM, 1GB free disk space
-- **Recommended**: 4GB+ RAM, 10GB+ free disk space for video processing
 
 ## Installation
 
-### 1. System Dependencies
-
-#### macOS (using Homebrew)
-```bash
-# Install FFmpeg
-brew install ffmpeg
-
-# Install Redis (if not already installed)
-brew install redis
-
-# Start Redis service
-brew services start redis
-```
-
-#### Ubuntu/Debian
-```bash
-# Install FFmpeg
-sudo apt update
-sudo apt install ffmpeg
-
-# Install Redis
-sudo apt install redis-server
-
-# Start Redis service
-sudo systemctl start redis-server
-sudo systemctl enable redis-server
-```
-
-#### Windows
-1. Download and install FFmpeg from https://ffmpeg.org/download.html
-2. Download and install Redis from https://redis.io/download
-3. Add FFmpeg to your system PATH
-
-### 2. Python Environment Setup
+### 1. Python Environment Setup
 
 ```bash
 # Clone the repository
@@ -79,7 +44,7 @@ venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 3. Environment Configuration
+### 2. Environment Configuration
 
 Create a `.env` file in the project root:
 
@@ -93,17 +58,33 @@ REDIS_HOST=localhost
 REDIS_PORT=6379
 REDIS_DB=0
 
-# File Retention Settings (optional)
-CLIP_RETENTION_HOURS=24
-TEMP_FILE_RETENTION_HOURS=1
+ADMIN_EMAIL=divyanshusoni061@gmail.com
+ADMIN_PHONE=917372958746
+FRONTEND_URL=http://localhost:8000
 
-# Email Settings (optional)
-EMAIL_HOST=smtp.gmail.com
-EMAIL_PORT=587
-EMAIL_HOST_USER=your-email@gmail.com
-EMAIL_HOST_PASSWORD=your-app-password
-DEFAULT_FROM_EMAIL=your-email@gmail.com
+DEFAULT_PASSWORD=defualtPassword # default password used to create user
+
+CSRF_TRUSTED_ORIGINS=http://127.1.1:8000,http://localhost:3000,http://localhost:5173
+
+ALLOWED_HOSTS=127.0.0.1,localhost
+
+CORS_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173
+
+BREVO_API_KEY=brevoapikey # used to send emails
+
+PROXIES=http://username:password@domain,http://username:password@domain2 # required if using the project in a server
+
+COOKIES_FILE=cookies.txt # youtube cookie file path, required if using the project in a server
+
 ```
+
+### 3. System Dependencies
+
+Ensure FFmpeg and Redis are installed:
+
+- **macOS**: `brew install ffmpeg redis`
+- **Ubuntu/Debian**: `sudo apt install ffmpeg redis-server`
+- **Windows**: Download from [ffmpeg.org](https://ffmpeg.org/download.html) and [redis.io](https://redis.io/download)
 
 ### 4. Database Setup
 
@@ -144,100 +125,28 @@ python manage.py check
 
 3. **Start RQ worker** (in a separate terminal):
    ```bash
-   python manage.py rqworker default
+   python manage.py rqworker default --with-scheduler
    ```
 
 4. **Access the application**:
-   - Web interface: http://127.0.0.1:8000/
    - Admin interface: http://127.0.0.1:8000/admin/
    - API endpoints: http://127.0.0.1:8000/api/
-
-### Production Deployment
-
-For production deployment, consider:
-
-- Use a proper WSGI server like Gunicorn
-- Set up a reverse proxy with Nginx
-- Use a process manager like Supervisor for RQ workers
-- Configure proper logging and monitoring
-- Set up SSL certificates
-- Use a production database like PostgreSQL
-
-## API Usage
-
-### Create a Clip Request
-
-```bash
-curl -X POST http://127.0.0.1:8000/api/clips/create/ \
-  -H "Content-Type: application/json" \
-  -d '{
-    "youtubeUrl": "https://www.youtube.com/watch?v=VIDEO_ID",
-    "startTime": "1:30",
-    "endTime": "2:45"
-  }'
-```
-
-### Check Clip Status
-
-```bash
-curl http://127.0.0.1:8000/api/clips/{requestId}/status/
-```
-
-### Download Processed Clip
-
-```bash
-curl -O http://127.0.0.1:8000/api/clips/{requestId}/download/
-```
-
-## Processing Methods
-
-The application uses three hybrid processing methods:
-
-1. **Method A (< 10 minutes)**: Download full video and clip with FFmpeg
-2. **Method B (> 10 minutes)**: Use yt-dlp --download-sections for efficiency
-3. **Method C (Fallback)**: FFmpeg stream processing with direct URLs
-
-## File Structure
-
-```
-yt_helper/
-├── home/                   # Main Django app
-├── utility/               # Utility functions and mixins
-├── yt_helper/            # Django project settings
-├── media/                # Media files storage
-│   ├── clips/           # Processed clips
-│   └── temp/            # Temporary files
-├── log_files/           # Application logs
-├── requirements.txt     # Python dependencies
-└── manage.py           # Django management script
-```
-
-## Troubleshooting
-
-### Common Issues
-
-1. **FFmpeg not found**:
-   - Ensure FFmpeg is installed and in your system PATH
-   - Test with: `ffmpeg -version`
-
-2. **Redis connection failed**:
-   - Ensure Redis server is running
-   - Test with: `redis-cli ping`
-
-3. **Permission errors**:
-   - Check file permissions for media directories
-   - Ensure the application has write access to media/clips and media/temp
-
-4. **Video download fails**:
-   - Check internet connectivity
-   - Verify the YouTube URL is accessible
-   - Some videos may be geo-restricted or private
 
 ### Logs
 
 Check application logs in the `log_files/` directory:
 - `info.log` - General application information
 - `warning.log` - Warnings and errors
+
+## Production Deploy Requirements (Must have)
+- Nodejs installed on machine.
+- Proxies bought from service providers like ([proxy-seller](https://proxy-seller.com/)). PS: ipv6 or residential proxies are recommended.
+- A youtube cookie file generated from "Get cookies.txt LOCALLY" extension on chrome browser.
+
+## Commands which should be run frequently
+- pip install --upgrade yt-dlp
+- pip install --upgrade yt-dlp-ejs
+These updates the ytdlp package so that project runs smoothly
 
 ## Contributing
 
@@ -259,15 +168,6 @@ For support and questions:
 - Review the application logs for error details
 
 
-
-Future features
-1. multiple clips of one video
-2. speed up or down
-
-
-
-
-# analytics
-3 min long clip  83s
-   720p 38mb 60s
-   480p 21mb 23s
+## Future features
+1. multiple timerange clips  of one video
+2. Support of twitter media download

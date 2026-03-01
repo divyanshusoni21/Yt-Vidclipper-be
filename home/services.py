@@ -4,7 +4,7 @@ import os
 import subprocess
 import time
 
-from typing import Dict, Any, Optional
+from typing import Optional
 
 from django.conf import settings
 from django.utils import timezone
@@ -33,73 +33,6 @@ class InvalidUrlException(Exception):
 class ProcessingFailedException(Exception):
     """Exception raised when video processing fails."""
     pass
-
-
-class VideoInfoService:
-    """Service class for handling YouTube video information extraction."""
-    
-
-    def getVideoInfo(self, url: str, ydlOpts: Dict[str, Any]=None) -> Dict[str, Any]:
-        """
-        Extract comprehensive video information using yt-dlp.
-        
-        Args:
-            url (str): The YouTube URL
-            
-        Returns:
-            Dict[str, Any]: Dictionary containing video information
-            
-        Raises:
-            InvalidUrlException: If the URL is invalid
-            VideoNotAvailableException: If the video is not accessible
-        """
-        if not self.validate_youtube_url(url):
-            raise InvalidUrlException(f"Invalid YouTube URL: {url}")
-        
-
-        try:
-            with yt_dlp.YoutubeDL(ydlOpts) as ydl:
-                logger.info(f"Extracting video info for URL: {url}")
-                info = ydl.extract_info(url, download=False)
-                
-                if not info:
-                    raise VideoNotAvailableException(f"No information available for video: {url}")
-                
-                # Extract relevant information
-                video_info = {
-                    'title': info.get('title'),
-                    'channel': info.get('channel'),
-                    'channel_id': info.get('channel_id'),
-                    'url': info.get('url'),
-                }
-                
-                # Log successful extraction
-                logger.info(f"Successfully extracted info for video: {video_info['title']}")
-                
-                return video_info
-                
-        except yt_dlp.DownloadError as e:
-            error_msg = str(e)
-            logger.error(f"yt-dlp download error for URL {url}: {error_msg}")
-            
-            # Handle specific error cases
-            if 'private video' in error_msg.lower():
-                raise VideoNotAvailableException(f"Video is private: {url}")
-            elif 'video unavailable' in error_msg.lower():
-                raise VideoNotAvailableException(f"Video is unavailable: {url}")
-            elif 'age-restricted' in error_msg.lower():
-                raise VideoNotAvailableException(f"Video is age-restricted: {url}")
-            elif 'copyright' in error_msg.lower():
-                raise VideoNotAvailableException(f"Video has copyright restrictions: {url}")
-            elif 'geo-blocked' in error_msg.lower() or 'not available in your country' in error_msg.lower():
-                raise VideoNotAvailableException(f"Video is geo-blocked: {url}")
-            else:
-                raise VideoNotAvailableException(f"Video not accessible: {error_msg}")
-                
-        except Exception as e:
-            logger.error(f"Unexpected error extracting video info for URL {url}: {str(e)}")
-            raise VideoNotAvailableException(f"Failed to extract video information: {str(e)}")
-    
 
 class ClipProcessingService:
     """Service class for processing video clips using hybrid methods."""
@@ -296,11 +229,12 @@ class ClipProcessingService:
             'quiet': True,
             'force_ipv6': True,
             'format': 'best[height<=720][protocol^=http]',
-            'cookiefile': cookiesFile, # important
-            'js_runtimes': { 'node': {}}, # important  
+            'js_runtimes': { 'node': {}}, # important, node js should be installed 
             'no_warnings': True,
             'extract_flat': False, 
         }
+        if cookiesFile:
+            ydlOpts['cookiefile'] = cookiesFile
         if proxy:
             ydlOpts['proxy'] = proxy
 

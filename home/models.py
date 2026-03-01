@@ -1,5 +1,9 @@
 from django.db import models
 from utility.mixins import UUIDMixin
+from django.db import models
+from django.contrib.auth.models import AbstractUser
+from utility.mixins import UUIDMixin
+from rest_framework_simplejwt.tokens import RefreshToken
 
 # Create your models here.
 
@@ -10,10 +14,17 @@ def clip_file_path(instance,fileName):
         channel_name = instance.clip_request.video_info.channel_name or 'unknown'
     return f'clips/{channel_name}/{fileName}'
 
-from django.db import models
-from django.contrib.auth.models import AbstractUser
-from utility.mixins import UUIDMixin
-from rest_framework_simplejwt.tokens import RefreshToken
+def speed_edit_upload_path(instance, fileName):
+    """Generate file path for speed edit uploads"""
+    return f'speed_edit_uploads/{instance.id}/{fileName}'
+
+
+def speed_edit_output_path(instance, fileName):
+    """Generate file path for speed edited output videos"""
+    return f'speed_edited_videos/{instance.id}/{fileName}'
+
+
+
 
 STATUS_CHOICES = [
         ('pending', 'Pending'),
@@ -98,64 +109,6 @@ class Clip(UUIDMixin):
     def __str__(self):
         return f"{self.clip_request.id} - {self.resolution}"
 
-
-class ClipAnalytics(UUIDMixin):
-    # Request Analytics
-    clip_request = models.ForeignKey(ClipRequest, on_delete=models.CASCADE, related_name='analytics')
-    
-    # Video Analytics
-    video_id = models.CharField(max_length=50)  # YouTube video ID
-    video_duration = models.IntegerField()  # in seconds
-    clip_duration = models.IntegerField()  # in seconds
-    clip_percentage = models.FloatField()  # percentage of original video clipped
-    
-    # Processing Analytics
-    processing_method = models.CharField(max_length=30)
-    processing_time = models.FloatField(null=True, blank=True)  # in seconds
-    download_size = models.BigIntegerField(null=True, blank=True)  # bytes downloaded
-    final_file_size = models.BigIntegerField(null=True, blank=True)  # final clip size
-    
-    # Channel Analytics
-    channel_name = models.CharField(max_length=200, null=True, blank=True)
-    channel_id = models.CharField(max_length=100, null=True, blank=True)
-    
-    # User Behavior Analytics
-    user_ip = models.GenericIPAddressField(null=True, blank=True)
-    user_agent = models.TextField(null=True, blank=True)
-    referrer = models.URLField(null=True, blank=True)
-    
-    # System Performance
-    server_load = models.FloatField(null=True, blank=True)
-    memory_usage = models.FloatField(null=True, blank=True)  # in MB
-    
-    # Success/Failure Analytics
-    success = models.BooleanField(default=False)
-    error_type = models.CharField(max_length=100, null=True, blank=True)
-    retry_count = models.IntegerField(default=0)
-    
-    class Meta:
-        db_table = 'clip_analytics'
-        ordering = ['-created_at']
-        indexes = [
-            models.Index(fields=['video_id']),
-            models.Index(fields=['channel_id']),
-            models.Index(fields=['processing_method']),
-            models.Index(fields=['success']),
-            models.Index(fields=['created_at']),
-        ]
-        
-    def __str__(self):
-        return f"ClipAnalytics {self.id} - {self.video_id} ({self.processing_method})"
-
-
-def speed_edit_upload_path(instance, fileName):
-    """Generate file path for speed edit uploads"""
-    return f'speed_edit_uploads/{instance.id}/{fileName}'
-
-
-def speed_edit_output_path(instance, fileName):
-    """Generate file path for speed edited output videos"""
-    return f'speed_edited_videos/{instance.id}/{fileName}'
 
 
 class SpeedEditRequest(UUIDMixin):

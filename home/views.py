@@ -21,8 +21,8 @@ from utility.functions import sendMail,format_validation_errors
 from rq.job import Job
 from rq.command import send_stop_job_command
 from rq.exceptions import InvalidJobOperation
-
-from .tasks import cleanup_cancelled_task_dir
+from threading import Thread
+from .tasks import cleanup_cancelled_task_dir,cleanup_old_files
 
 
 
@@ -482,4 +482,19 @@ class CancelRequestViewSet(generics.GenericAPIView):
             queue = django_rq.get_queue('default')
             # cleanup the task directory after 30 seconds
             queue.enqueue_in(timedelta(seconds=30), cleanup_cancelled_task_dir, requestObj, requestType)
-        
+
+
+class CleanupOldFilesViewSet(generics.GenericAPIView):
+    """
+    API endpoint to trigger cleanup of old files based on retention policy
+    This can be protected or scheduled as needed
+    """
+
+    def get(self, request):
+        try:
+            Thread(target=cleanup_old_files).start()
+            return Response(status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.error(traceback.format_exc())
+            return Response({
+            }, status=status.HTTP_400_BAD_REQUEST)

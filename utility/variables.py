@@ -14,3 +14,4 @@ defaultPassword = DEFAULT_PASSWORD
 projectLogo ="https://i.ibb.co/W4ph4tnj/Screenshot-2026-01-04-at-3-45-21-PM.png"
 proxies = PROXIES
 cookiesFile = COOKIES_FILE
+oldFileRetentionHours = 24 # Number of hours to retain old files before cleanup

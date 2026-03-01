@@ -11,6 +11,6 @@ pytz
 requests
 redis
 yt-dlp
+yt-dlp-ejs
 ffmpeg-python
 django-rq
-yt-dlp-ejs
