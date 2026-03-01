@@ -129,7 +129,7 @@ class ClipProcessingService:
         cmd = [
             'ffmpeg',
             '-y',               # Overwrite existing files
-            # '-hide_banner',     # Clean up logs
+            '-hide_banner',     # Clean up logs
             # '-loglevel', 'error', 
             
             # --- INPUT 0: Video Stream ---
