@@ -50,4 +50,4 @@ jobs:
         run: python manage.py check
 
       - name: Check for pending migrations
-        run: python manage.py migrate --check
+        run: python manage.py makemigrations --check --dry-run
