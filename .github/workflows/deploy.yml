@@ -1,0 +1,76 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  ci:
+    name: Django checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Create mock .env
+        run: |
+          cat > .env <<'EOF'
+          SECRET_KEY=ci-test-secret-key-not-for-production
+          DEBUG=True
+          ALLOWED_HOSTS=localhost,127.0.0.1
+          REDIS_HOST=localhost
+          REDIS_PORT=6379
+          REDIS_DB=0
+          FRONTEND_URL=http://localhost:3000
+          ADMIN_EMAIL=test@test.com
+          BREVO_API_KEY=dummy
+          COOKIES_FILE=cookies.txt
+          EOF
+
+      - name: Run Django system check
+        run: python manage.py check
+
+      - name: Check for pending migrations
+        run: python manage.py migrate --check
+
+  deploy:
+    name: Deploy to production
+    runs-on: ubuntu-latest
+    needs: ci
+
+    steps:
+      - name: SSH deploy
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          script: |
+            set -e
+            cd ${{ secrets.DEPLOY_PATH }}
+            git pull origin main
+            source ${{ secrets.VENV_PATH }}/bin/activate
+            pip install -r requirements.txt
+            python manage.py migrate --noinput
+            python manage.py collectstatic --noinput
+            systemctl restart gunicorn
+            systemctl restart rqworker
+            echo "Deployment complete."
