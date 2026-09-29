@@ -1,8 +1,10 @@
+import copy
 import re
 import yt_dlp
 import os
 import subprocess
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 from typing import Optional
 
@@ -121,68 +123,80 @@ class ClipProcessingService:
         else:
             return ""
 
-    def process_dual_input_clip(self, videoUrl: str, audioUrl: str, startSec: int, duration: int, proxyUrl: str,out720pPathAbsolute: str,out480pPathAbsolute: str) -> bool:
+    def _section_format(self, maxHeight: int) -> str:
         """
-        Takes separate video and audio URLs and generates 720p and 480p clips
-        using an ISP Proxy to prevent IP blocks.
+        Native H.264 at or below maxHeight. HLS first so yt-dlp can pull only
+        the ranged fragments, then progressive HTTP, then any stream at that height.
+        The last `best` avoids a hard fail when that height is missing; the Clip
+        row is still stored under the requested resolution label.
         """
-        cmd = [
-            'ffmpeg',
-            '-y',               # Overwrite existing files
-            '-hide_banner',     # Clean up logs
-            # '-loglevel', 'error', 
-            
-            # --- INPUT 0: Video Stream ---
-            '-http_proxy', proxyUrl, # Use Proxy for Video
-            '-ss', str(startSec),    # Seek on remote server
-            '-t', str(duration),      # Duration to download
-            '-i', videoUrl,
-            
-            # --- INPUT 1: Audio Stream ---
-            '-http_proxy', proxyUrl, # Use Proxy for Audio
-            '-ss', str(startSec),    
-            '-t', str(duration),
-            '-i', audioUrl,
-            
-            # --- FILTER COMPLEX ---
-            # Splitting and Scaling
-            '-filter_complex', 
-            '[0:v]split=2[v_in_720][v_in_480];'
-            '[v_in_720]scale=-2:720[v_out_720];'
-            '[v_in_480]scale=-2:480[v_out_480]',
-            
-            # --- OUTPUT 1: 720p ---
-            '-map', '[v_out_720]',    
-            '-map', '1:a',            
-            '-c:v', 'libx264',        
-            '-preset', 'superfast',   # more the faster more the size of clip, options : ultrafast,superfast, fast, medium, slow, veryslow
-            '-crf', '23',             
-            '-c:a', 'aac',            
-            out720pPathAbsolute,
-            
-            # --- OUTPUT 2: 480p ---
-            '-map', '[v_out_480]',    
-            '-map', '1:a',            
-            '-c:v', 'libx264',
-            '-preset', 'superfast',   # more the faster more the size of clip, options : ultrafast,superfast, fast, medium, slow, veryslow
-            '-crf', '28',             
-            '-c:a', 'aac',
-            out480pPathAbsolute
-        ]
+        height = f"height<={maxHeight}"
+        return (
+            f'bestvideo[{height}][vcodec^=avc1][protocol*="m3u8"]+bestaudio[protocol*="m3u8"]/'
+            f'best[{height}][vcodec^=avc1][protocol*="m3u8"]/'
+            f'bestvideo[{height}][vcodec^=avc1][protocol^=http]+bestaudio[protocol^=http]/'
+            f'best[{height}][vcodec^=avc1]/'
+            f'bestvideo[{height}]+bestaudio/'
+            f'best[{height}][ext=mp4]/'
+            f'best[{height}]/'
+            'best'
+        )
 
-        logger.info(f"Processing Clips .....")
-        try:
-            subprocess.run(cmd, 
-                        check=True,
-                        capture_output=True,
-                        text=True,
-                        timeout=300,
-                        stdin=subprocess.DEVNULL,
-            )
-            logger.info(f"Success! Generated 720p & 480p.")
-        except subprocess.CalledProcessError as e:
-            raise ProcessingFailedException(f"FFmpeg Failed with error : {traceback.format_exc()}")
+    def _base_ydl_opts(self, startSec: int, endSec: int, proxy: str) -> dict:
+        """
+        Options shared by the one metadata fetch and both section downloads.
+        download_ranges keeps the CDN fetch inside the requested window.
+        Deno runs yt-dlp-ejs; web_safari is what exposes the HLS H.264 renditions.
+        """
+        ydlOpts = {
+            'js_runtimes': {'deno': {}},
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['web_safari', 'default'],
+                }
+            },
+            'concurrent_fragment_downloads': 4,
+            'download_ranges': yt_dlp.utils.download_range_func(None, [(startSec, endSec)]),
+            'merge_output_format': 'mp4',
+            'downloader_args': {
+                'ffmpeg_i': [
+                    '-reconnect', '1',
+                    '-reconnect_streamed', '1',
+                    '-reconnect_delay_max', '5',
+                    '-multiple_requests', '1',
+                    '-buffer_size', '32M',
+                ]
+            },
+            # Remux only. faststart moves the moov atom; this is not a re-encode.
+            'postprocessor_args': {
+                'ffmpeg': [
+                    '-threads', '1',
+                    '-movflags', '+faststart',
+                ]
+            },
+            'overwrites': True,
+            'no_warnings': False,
+            'noplaylist': True,
+            'quiet': True,
+        }
+        if cookiesFile:
+            ydlOpts['cookiefile'] = cookiesFile
+        if proxy:
+            ydlOpts['proxy'] = proxy
+        return ydlOpts
 
+    def download_clip(self, baseOpts: dict, infoDict: dict, outputPath: str, maxHeight: int) -> None:
+        """
+        Download one resolution (720 or 480) from the cached manifest.
+        Copies are required because this runs in parallel: yt-dlp mutates both
+        dicts, and a shared dict would make the other thread hit YouTube again.
+        """
+        sectionOpts = copy.deepcopy(baseOpts)
+        sectionOpts['outtmpl'] = outputPath
+        sectionOpts['format'] = self._section_format(maxHeight)
+        logger.info(f"Slicing {maxHeight}p clip from cached manifest")
+        with yt_dlp.YoutubeDL(sectionOpts) as ydl:
+            ydl.process_ie_result(copy.deepcopy(infoDict), download=True)
 
     def save_video_info(self, info: dict, clipRequest:ClipRequest,clipDurationSeconds: int,endSec: int) -> bool:
         # --- Create/Update VideoDetail object ---
@@ -221,55 +235,41 @@ class ClipProcessingService:
 
         clipRequest.save(update_fields=['video_info', 'clip_duration', 'end_time'])
     
-    def download_and_create_clips(self, clipRequest:ClipRequest, startSec: int, endSec: int, clipDurationSeconds: int,out720pPathAbsolute: str,out480pPathAbsolute: str) -> bool:
-
+    def download_and_create_clips(self, clipRequest:ClipRequest, startSec: int, endSec: int, clipDurationSeconds: int,out720pPathAbsolute: str,out480pPathAbsolute: str) -> str:
+        """
+        Fetch YouTube metadata once, then download the 720p and 480p windows
+        from that same manifest at the same time. No libx264 pass.
+        """
         proxy = self.get_proxy()
+        baseOpts = self._base_ydl_opts(startSec, endSec, proxy)
 
-        ydlOpts = {
-            'quiet': True,
-            'force_ipv6': True,
-            'format': 'best[height<=720][protocol^=http]',
-            'js_runtimes': { 'node': {}}, # important, node js should be installed 
-            'no_warnings': True,
-            'extract_flat': False, 
-        }
-        if cookiesFile:
-            ydlOpts['cookiefile'] = cookiesFile
-        if proxy:
-            ydlOpts['proxy'] = proxy
+        for outPath in (out720pPathAbsolute, out480pPathAbsolute):
+            dirName = os.path.dirname(outPath)
+            if dirName:
+                os.makedirs(dirName, exist_ok=True)
 
-        videoUrl = None
-        audioUrl = None
+        # download=False: manifests and stream URLs only, no media bytes yet.
+        with yt_dlp.YoutubeDL(baseOpts) as ydl:
+            info = ydl.extract_info(clipRequest.youtube_url, download=False)
 
-        
-        with yt_dlp.YoutubeDL(ydlOpts) as ydl:
-            info = ydl.extract_info(clipRequest.youtube_url, download=False) # download = false is important
-            
-            # Check if we got separate streams or a single combined stream
-            if 'requested_formats' in info:
-                # Separate streams found (High Quality)
-                for f in info['requested_formats']:
-                    if f['vcodec'] != 'none':
-                        videoUrl = f['url']
-                    elif f['acodec'] != 'none':
-                        audioUrl = f['url']
-            else:
-                # Fallback to single stream if separate ones aren't available
-                # pass that same URL to both video_url and audio_url arguments in ffmpeg command.
-                videoUrl = info['url']
-                audioUrl = info['url']
-            
-            videoDuration = info.get('duration', None)
-            if videoDuration is not None and startSec > videoDuration:
-                # raise error if start time is beyond video duration
-                raise ProcessingFailedException("Start time cannot be beyond video duration.")
-            
-            self.save_video_info(info, clipRequest, clipDurationSeconds, endSec)
+        videoDuration = info.get('duration', None)
+        if videoDuration is not None and startSec > videoDuration:
+            raise ProcessingFailedException("Start time cannot be beyond video duration.")
 
-        if not videoUrl or not audioUrl:
-            raise ProcessingFailedException("Could not find separate video and audio streams.")
+        self.save_video_info(info, clipRequest, clipDurationSeconds, endSec)
 
-        self.process_dual_input_clip(videoUrl, audioUrl, startSec, clipDurationSeconds, proxy, out720pPathAbsolute, out480pPathAbsolute)
+        # Same manifest, two independent CDN fetches. Two workers so neither waits on the other.
+        clipJobs = (
+            (out720pPathAbsolute, 720),
+            (out480pPathAbsolute, 480),
+        )
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [
+                executor.submit(self.download_clip, baseOpts, info, outputPath, maxHeight)
+                for outputPath, maxHeight in clipJobs
+            ]
+            for future in futures:
+                future.result()
 
         return proxy
     
@@ -293,8 +293,8 @@ class ClipProcessingService:
     @job('default', timeout='5m')
     def process_clip_request(self, clipRequest:ClipRequest) -> bool:
         """
-        Process a clip request using the optimized hybrid method (Smart Cut).
-        Downloads the 720p video using ytdlp and then uses ffmpeg to generate 480p video.
+        Download the requested window as native 720p and 480p MP4s.
+        One yt-dlp metadata fetch, then two CDN section downloads from that manifest.
         
         Args:
             clipRequest: ClipRequest model instance
@@ -310,7 +310,7 @@ class ClipProcessingService:
                 clipRequest, 
                 'processing_start', 
                 'info', 
-                {'message': 'Starting clip processing (Smart Cut)'}
+                {'message': 'Starting clip processing (CDN section download)'}
             )
             
             # Create directory for this request
@@ -340,7 +340,7 @@ class ClipProcessingService:
                 clipRequest,
                 'download_720p_clip',
                 'info',
-                {'message': f'Downloaded 720p clip in {t3 - t2:.2f}s'}
+                {'message': f'Downloaded 720p and 480p clips in {t3 - t2:.2f}s'}
             )
             
             # Verify output file exists and has content

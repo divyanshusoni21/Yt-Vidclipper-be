@@ -10,7 +10,7 @@ python-dotenv
 pytz
 requests
 redis
-yt-dlp
+yt-dlp[default,curl-cffi]
 yt-dlp-ejs
 ffmpeg-python
 django-rq
