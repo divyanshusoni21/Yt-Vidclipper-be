@@ -83,3 +83,4 @@ env/
 *.pyc
 
 cookies.txt
+graphify-out/

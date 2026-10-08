@@ -1,4 +1,8 @@
-# YouTube Clipper
+# YT VidClipper
+
+[![Live Demo](https://img.shields.io/badge/Live-Demo-brightgreen.svg)](https://yt-vidclipper-fe.vercel.app/)
+[![Frontend Repo](https://img.shields.io/badge/Frontend-Repository-blue.svg)](https://github.com/divyanshusoni21/Yt-vidclipper-fe)
+
 
 A Django web application that allows users to extract specific segments from YouTube videos by providing a YouTube URL and timestamp range. The system handles video downloading, clipping, and serving the processed clip back to the user for download.
 
