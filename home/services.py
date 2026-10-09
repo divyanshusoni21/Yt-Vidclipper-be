@@ -1,80 +1,62 @@
 import copy
-import re
-import yt_dlp
 import os
+import random
+import re
+import shutil
 import subprocess
-import time
+import traceback
 from concurrent.futures import ThreadPoolExecutor
+from time import time
 
-from typing import Optional
-
+import yt_dlp
+from celery.exceptions import SoftTimeLimitExceeded
 from django.conf import settings
 from django.utils import timezone
 
-from .models import STATUS_CHOICES, VideoDetail,ClipRequest
-from .serializers import VideoDetailSerializer, ClipSerializer
-import shutil
-from time import time
-from utility.functions import time_to_seconds, runSerializer
-import traceback
+from utility.functions import runSerializer, time_to_seconds
+from utility.variables import cookiesFile, proxies
 from yt_helper.settings import logger
-from django_rq import job
-from django.core.files import File
-import random
-from utility.variables import proxies, cookiesFile
-class VideoNotAvailableException(Exception):
-    """Exception raised when a video is not available or accessible."""
-    pass
 
-
-class InvalidUrlException(Exception):
-    """Exception raised when a YouTube URL is invalid."""
-    pass
+from .models import CLIP_STATUS_CHOICES, Clip, ClipRequest, VideoDetail
+from .serializers import VideoDetailSerializer
+from .utils import update_obj_status
 
 
 class ProcessingFailedException(Exception):
     """Exception raised when video processing fails."""
-    pass
+
 
 class ClipProcessingService:
     """Service class for processing video clips using hybrid methods."""
 
-    def __init__(self):
-
-        # Ensure ffmpeg is installed
-        self._check_ffmpeg()
-    
-
-    # YouTube URL patterns for validation, including /live/ URLs
-    YOUTUBE_URL_PATTERNS = [
+    # YouTube URL patterns for validation, including shorts and live streams
+    YOUTUBE_URL_PATTERNS = (
         r'(?:https?://)?(?:www\.)?youtube\.com/watch\?v=([a-zA-Z0-9_-]{11})',
         r'(?:https?://)?(?:www\.)?youtu\.be/([a-zA-Z0-9_-]{11})',
         r'(?:https?://)?(?:www\.)?youtube\.com/embed/([a-zA-Z0-9_-]{11})',
         r'(?:https?://)?(?:www\.)?youtube\.com/v/([a-zA-Z0-9_-]{11})',
-        r'(?:https?://)?(?:www\.)?youtube\.com/live/([a-zA-Z0-9_-]{11})(?:\?.*)?'
-    ]
-    
+        r'(?:https?://)?(?:www\.)?youtube\.com/live/([a-zA-Z0-9_-]{11})(?:\?.*)?',
+        r'(?:https?://)?(?:www\.)?youtube\.com/shorts/([a-zA-Z0-9_-]{11})(?:\?.*)?',
+    )
+
+    def __init__(self):
+        # Ensure ffmpeg is installed
+        self._check_ffmpeg()
+
     def validate_youtube_url(self, url: str) -> bool:
         """
-        Validate if the provided URL is a valid YouTube URL
-        
-        Args:
-            url (str): The YouTube URL to validate
-            
-        Returns:
-            bool: True if valid YouTube URL, False otherwise
+        Validate if the provided URL matches recognized YouTube video URL patterns.
+        Used by ClipRequestSerializer to reject invalid URLs early before queuing.
         """
         if not url or not isinstance(url, str):
             return False
 
-        # Check against all YouTube URL patterns
         for pattern in self.YOUTUBE_URL_PATTERNS:
             if re.match(pattern, url.strip()):
                 return True
 
         return False
-    
-    
+
     def _check_ffmpeg(self):
         """Checks if ffmpeg is installed and in the system's PATH."""
         if not shutil.which("ffmpeg"):
@@ -82,27 +64,7 @@ class ClipProcessingService:
                 "ffmpeg is not installed or not in your system's PATH. "
                 "Please install ffmpeg to use this script."
             )
-
-    def extract_video_id(self, url: str) -> Optional[str]:
-        """
-        Extract YouTube video ID from URL using regex patterns.
-        
-        Args:
-            url (str): The YouTube URL
-            
-        Returns:
-            Optional[str]: Video ID if found, None otherwise
-        """
-        if not url or not isinstance(url, str):
-            return None
-        
-        for pattern in self.YOUTUBE_URL_PATTERNS:
-            match = re.match(pattern, url.strip())
-            if match:
-                return match.group(1)
-        
-        return None
-    
+  
     def get_proxy(self) -> str:
         
         # get latest proxy used in clip request
@@ -160,6 +122,8 @@ class ClipProcessingService:
             'merge_output_format': 'mp4',
             'downloader_args': {
                 'ffmpeg_i': [
+                    # One thread so a section download cannot take every core.
+                    '-threads', '1',
                     '-reconnect', '1',
                     '-reconnect_streamed', '1',
                     '-reconnect_delay_max', '5',
@@ -273,24 +237,25 @@ class ClipProcessingService:
 
         return proxy
     
-    def create_clip_object(self, outPathAbsolute: str, clipRequest:ClipRequest, clipDurationSeconds: int, resolution: str) -> bool:
+    def create_clip_object(self, outPathAbsolute: str, clipRequest: ClipRequest, clipDurationSeconds: int, resolution: str) -> Clip:
         clipBytes = os.path.getsize(outPathAbsolute)
         clipMb = round(clipBytes / (1024 * 1024), 2)  # Convert bytes to MB
-        
-        # Create Clip object using Django File object
-        with open(outPathAbsolute, 'rb') as f:
-            clipFile = File(f, name=os.path.basename(outPathAbsolute))
-            clipData = {
-                'clip_request': clipRequest.id,
-                'clip': clipFile,
+        fileName = os.path.basename(outPathAbsolute)
+        relativeClipPath = f"clips/{clipRequest.id}/{fileName}"
+
+        # Point the Clip model directly to the downloaded file under clips/<clipRequest.id>/
+        # Update or create to ensure idempotency if the task is retried by Celery
+        clipObj, _ = Clip.objects.update_or_create(
+            clip_request=clipRequest,
+            resolution=resolution,
+            defaults={
+                'clip': relativeClipPath,
                 'size': float(clipMb),
                 'duration': clipDurationSeconds,
-                'resolution': resolution,
-            }
-            clipObj, _ = runSerializer(ClipSerializer, clipData)
+            },
+        )
         return clipObj
 
-    @job('default', timeout='5m')
     def process_clip_request(self, clipRequest:ClipRequest) -> bool:
         """
         Download the requested window as native 720p and 480p MP4s.
@@ -310,8 +275,9 @@ class ClipProcessingService:
                 clipRequest, 
                 'processing_start', 
                 'info', 
-                {'message': 'Starting clip processing (CDN section download)'}
+                {'message': 'Starting clip processing'}
             )
+            update_obj_status(clipRequest, status=CLIP_STATUS_CHOICES.PROCESSING)
             
             # Create directory for this request
             request_dir = os.path.join(settings.MEDIA_ROOT, 'clips', str(clipRequest.id))
@@ -357,8 +323,13 @@ class ClipProcessingService:
             self.create_clip_object(out480pPathAbsolute, clipRequest, clipDurationSeconds, '480p')
 
             t4 = time()
+            # Cancel can land while ffmpeg is still running. Do not overwrite that status.
+            clipRequest.refresh_from_db(fields=['status'])
+            if clipRequest.status == CLIP_STATUS_CHOICES.CANCELLED:
+                return False
+                
             # --- Final Success Update ---
-            clipRequest.status = STATUS_CHOICES[1][0] # completed
+            clipRequest.status = CLIP_STATUS_CHOICES.COMPLETED
             clipRequest.processed_at = timezone.now()
             clipRequest.total_time_taken = int(t4 - t1)
             clipRequest.proxy = proxy
@@ -377,18 +348,25 @@ class ClipProcessingService:
     
         except Exception as e:
             logger.error(traceback.format_exc())
-            clipRequest.status = STATUS_CHOICES[2][0] # failed
-            clipRequest.error_message = str(e)
-            clipRequest.save(update_fields=['status', 'error_message'])
-            
+            clipRequest.refresh_from_db(fields=['status'])
+            if clipRequest.status == CLIP_STATUS_CHOICES.CANCELLED:
+                return False
+
+            errorMsg = (
+                "Clip processing timed out (exceeded time limit)"
+                if isinstance(e, SoftTimeLimitExceeded)
+                else str(e)
+            )
+            update_obj_status(clipRequest, status=CLIP_STATUS_CHOICES.FAILED, errorMessage=errorMsg)
+
             self.log_processing_step(
                 clipRequest,
                 'processing_error',
                 'error',
-                {'error': str(e), 'exception_type': type(e).__name__}
+                {'error': errorMsg, 'exception_type': type(e).__name__}
             )
-            return False
-
+            # Re-raise so tasks.py can clean up directories and Celery handles task failure
+            raise
 
     def log_processing_step(self, clipRequest, step: str, status: str, details: dict) -> None:
         """
@@ -448,7 +426,6 @@ class SpeedEditService:
         if not shutil.which("ffmpeg"):
             raise FileNotFoundError("ffmpeg is not installed or not in your system's PATH")
     
-    @job('default', timeout='5m')
     def process_speed_edit_request(self, speedEditRequest) -> bool:
         """
         Process a speed edit request from either uploaded video or existing clip.
@@ -462,6 +439,9 @@ class SpeedEditService:
         try:
             tStart = time()
             logger.info(f"Starting speed edit processing for request {speedEditRequest.id}")
+            
+            # Set status to processing so polling clients and cancellation know worker is active
+            update_obj_status(speedEditRequest, status=CLIP_STATUS_CHOICES.PROCESSING)
             
             # Get source video path
             sourcePath = speedEditRequest.get_source_path()
@@ -507,6 +487,8 @@ class SpeedEditService:
             
             ffmpegCmd = [
                 'ffmpeg',
+                # Cap threads so a speed change does not use every core
+                '-threads', '2',
                 '-i', sourcePath,
                 '-filter_complex', f'[0:v]{videoFilter}[v];[0:a]{audioFilterChain}[a]',
                 '-map', '[v]',
@@ -536,29 +518,39 @@ class SpeedEditService:
             outputSizeMb = round(outputSizeBytes / (1024 * 1024), 2)
             outputDuration = int(originalDuration / speedFactor)
             
-            # Save output file to model
-            with open(outputPath, 'rb') as f:
-                speedEditRequest.output_video.save(outputFilename, File(f), save=False)
+            # Point to the existing output file on disk directly instead of copying the file bytes again
+            speedEditRequest.output_video.name = f"speed_edited_videos/{speedEditRequest.id}/{outputFilename}"
             
             # Update model
             tEnd = time()
+            # Cancel can land while ffmpeg is still running. Do not overwrite that status.
+            speedEditRequest.refresh_from_db(fields=['status'])
+            if speedEditRequest.status == CLIP_STATUS_CHOICES.CANCELLED:
+                return False
             speedEditRequest.output_size = outputSizeMb
             speedEditRequest.output_duration = outputDuration
             speedEditRequest.processing_time = round(tEnd - tStart, 2)
-            speedEditRequest.status = STATUS_CHOICES[1][0]  # completed
+            speedEditRequest.status = CLIP_STATUS_CHOICES.COMPLETED
             speedEditRequest.save()
             
             logger.info(f"Speed edit completed for request {speedEditRequest.id} in {tEnd - tStart:.2f}s")
             return True
             
         except Exception as e:
-            logger.error(f"Speed edit failed for request {speedEditRequest.id}: {str(e)}")
+            logger.error(f"Speed edit failed for request {speedEditRequest.id}: {e!s}")
             logger.error(traceback.format_exc())
-            
-            speedEditRequest.status = STATUS_CHOICES[2][0]  # failed
-            speedEditRequest.error_message = str(e)
-            speedEditRequest.save(update_fields=['status', 'error_message'])
-            return False
+
+            speedEditRequest.refresh_from_db(fields=['status'])
+            if speedEditRequest.status == CLIP_STATUS_CHOICES.CANCELLED:
+                return False
+
+            errorMsg = (
+                "Speed edit processing timed out (exceeded time limit)"
+                if isinstance(e, SoftTimeLimitExceeded)
+                else str(e)
+            )
+            update_obj_status(speedEditRequest, status=CLIP_STATUS_CHOICES.FAILED, errorMessage=errorMsg)
+            raise
     
     def _get_video_duration(self, videoPath: str) -> int:
         """Get video duration in seconds using ffprobe"""
@@ -576,5 +568,3 @@ class SpeedEditService:
         except Exception as e:
             logger.warning(f"Failed to get video duration: {str(e)}")
             return 0
-
-

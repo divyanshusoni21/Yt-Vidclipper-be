@@ -49,7 +49,6 @@ INSTALLED_APPS = [
     'rest_framework_simplejwt',
     'corsheaders',
     'django_extensions',
-    'django_rq',
 
 ]
 
@@ -212,17 +211,17 @@ SIMPLE_JWT = {
 
 FILE_UPLOAD_MAX_MEMORY_SIZE = 50 * 1024 * 1024 # 50 Mb limit
 
-# Redis and Django-RQ Configuration
+# Redis connection pieces. Celery broker, result backend, and queues are set in celery.py.
 REDIS_HOST = os.environ.get('REDIS_HOST', 'localhost')
 REDIS_PORT = os.environ.get('REDIS_PORT', 6379)
 REDIS_DB = os.environ.get('REDIS_DB', 0)
 
-RQ_QUEUES = {
+# Shared Redis cache so a crash counter survives a dead worker child.
+# LocMem would vanish with the child and could not stop a crash loop.
+CACHES = {
     'default': {
-        'HOST': REDIS_HOST,
-        'PORT': REDIS_PORT,
-        'DB': REDIS_DB,
-        'DEFAULT_TIMEOUT': 360,
+        'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+        'LOCATION': f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}",
     }
 }
 
@@ -269,6 +268,11 @@ LOGGING = {
             'propagate': True,  
             'level': os.getenv('DJANGO_LOG_LEVEL', 'DEBUG')  
         },  
+        "django.db.backends": {
+            "handlers": ["warning_file", "info_file", "console"],
+            "level": "WARNING",  # Only logs actual DB errors, ignores INSERT/SELECT
+            "propagate": False,  # Prevents sending logs upward to the "django" logger
+        },
     },  
 }  
 import logging 

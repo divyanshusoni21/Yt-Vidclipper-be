@@ -13,4 +13,4 @@ redis
 yt-dlp[default,curl-cffi]
 yt-dlp-ejs
 ffmpeg-python
-django-rq
+celery

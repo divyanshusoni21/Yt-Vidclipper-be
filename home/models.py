@@ -1,18 +1,15 @@
-from django.db import models
-from utility.mixins import UUIDMixin
-from django.db import models
 from django.contrib.auth.models import AbstractUser
-from utility.mixins import UUIDMixin
+from django.db import models
 from rest_framework_simplejwt.tokens import RefreshToken
+
+from utility.mixins import UUIDMixin
 
 # Create your models here.
 
-def clip_file_path(instance,fileName):
-    """Generate file path for clip uploads using clip_request's video_info channel_name"""
-    channel_name = 'unknown'
-    if instance.clip_request and instance.clip_request.video_info:
-        channel_name = instance.clip_request.video_info.channel_name or 'unknown'
-    return f'clips/{channel_name}/{fileName}'
+def clip_file_path(instance, fileName):
+    """Generate file path for clip uploads using clip_request ID"""
+    requestId = instance.clip_request_id or 'unknown'
+    return f'clips/{requestId}/{fileName}'
 
 def speed_edit_upload_path(instance, fileName):
     """Generate file path for speed edit uploads"""
@@ -26,20 +23,23 @@ def speed_edit_output_path(instance, fileName):
 
 
 
-STATUS_CHOICES = [
-        ('pending', 'Pending'),
-        ('completed', 'Completed'),
-        ('failed', 'Failed'),
-        ('cancelled', 'Cancelled'),
-    ]
+# Status choices for Clip and SpeedEdit requests
+class CLIP_STATUS_CHOICES(models.TextChoices):
+    PENDING = 'pending', 'Pending'
+    PROCESSING = 'processing', 'Processing'
+    COMPLETED = 'completed', 'Completed'
+    FAILED = 'failed', 'Failed'
+    CANCELLED = 'cancelled', 'Cancelled'
 
-CLIP_RESOLUTION = (
-    ('1080p', '1080p'), 
-    ('720p', '720p'),
-    ('480p', '480p'),
-    ('360p', '360p'),
-    ('240p', '240p'),
-)
+
+# Resolution choices for Clips
+class CLIP_RESOLUTION(models.TextChoices):
+    RES_1080P = '1080p', '1080p'
+    RES_720P = '720p', '720p'
+    RES_480P = '480p', '480p'
+    RES_360P = '360p', '360p'
+    RES_240P = '240p', '240p'
+
 
 class User(AbstractUser, UUIDMixin):
     """Custom User model extending Django's AbstractUser"""
@@ -83,7 +83,7 @@ class ClipRequest(UUIDMixin):
     youtube_url = models.URLField()
     start_time = models.TimeField()  
     end_time = models.TimeField()    
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    status = models.CharField(max_length=20, choices=CLIP_STATUS_CHOICES.choices, default=CLIP_STATUS_CHOICES.PENDING)
     processed_at = models.DateTimeField(null=True, blank=True)
     video_info = models.ForeignKey(VideoDetail, on_delete=models.SET_NULL, null=True, blank=True)
     clip_duration = models.IntegerField(null=True, blank=True,help_text="clip duration in seconds")  # clip duration in seconds
@@ -104,7 +104,7 @@ class Clip(UUIDMixin):
     clip = models.FileField(upload_to=clip_file_path)
     size = models.FloatField(null=True, blank=True,help_text="clip size in mb")
     duration = models.IntegerField(null=True, blank=True,help_text="clip duration in seconds")
-    resolution = models.CharField(max_length=10,choices=CLIP_RESOLUTION, blank=True)
+    resolution = models.CharField(max_length=10,choices=CLIP_RESOLUTION.choices, blank=True)
 
     def __str__(self):
         return f"{self.clip_request.id} - {self.resolution}"
@@ -125,7 +125,7 @@ class SpeedEditRequest(UUIDMixin):
     speed_factor = models.FloatField(help_text="Speed multiplier (e.g., 0.5, 1.5, 2.0)")
     
     # Processing status
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    status = models.CharField(max_length=20, choices=CLIP_STATUS_CHOICES.choices, default=CLIP_STATUS_CHOICES.PENDING)
     
     # Output
     output_video = models.FileField(upload_to=speed_edit_output_path, null=True, blank=True)
