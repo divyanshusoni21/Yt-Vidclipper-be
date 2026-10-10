@@ -168,33 +168,42 @@ class BrevoEmail:
             if attachments:
                 payload["attachment"] = attachments
             
-            # Send the email
+            # Send the email with a 30s timeout so network drops fail fast instead of hanging
             response = requests.post(
                 cls.BREVO_API_URL,
                 json=payload,
-                headers=cls._get_headers()
+                headers=cls._get_headers(),
+                timeout=30,
             )
-            
+
             # Log the result
             if response.status_code == 201:
                 logger.info(f"Brevo email sent to {data['to_email']}, subject: {data['email_subject']}")
+            elif response.status_code in (429, 500, 502, 503, 504):
+                # Rate limit or remote server error - raise so Celery task can retry with backoff
+                logger.error(f"Brevo server error ({response.status_code}): {response.text}")
+                response.raise_for_status()
             else:
                 logger.error(f"Failed to send Brevo email: {response.status_code} - {response.text}")
-            
+
             return {
                 "status_code": response.status_code,
                 "message": response.text,
-                "success": response.status_code == 201
+                "success": response.status_code == 201,
             }
-            
+
+        except requests.RequestException as e:
+            # Re-raise network drops, timeouts, and 5xx/429 HTTP errors so Celery can autoretry
+            logger.error(f"Network or API error sending Brevo email: {e}")
+            raise
         except Exception as e:
-            error_msg = f"Error sending Brevo email: {str(e)}"
-            logger.error(error_msg)
+            errorMsg = f"Error sending Brevo email: {e}"
+            logger.error(errorMsg)
             logger.error(traceback.format_exc())
             return {
                 "status_code": 500,
-                "message": error_msg,
-                "success": False
+                "message": errorMsg,
+                "success": False,
             }
 
 # Alias for backward compatibility

@@ -1,6 +1,3 @@
-from threading import Thread
-from email_func.brevo_email import Email
-
 from rest_framework import exceptions
 from rest_framework.views import  exception_handler
 from rest_framework.exceptions import ValidationError
@@ -19,8 +16,9 @@ def sendMail(body:dict,email:str,subject:str,csvFilePath:list[str] = None ,fileA
             "attach_file":attachFile,
             "file_attach_urls":fileAttachUrls
             }
-    t1 = Thread(target=Email.send_email,args=(data,))
-    t1.start()
+    # Import here so utility.functions and home.tasks do not import each other at startup.
+    from home.tasks import send_email_task
+    send_email_task.delay(data)
 
 def runSerializer(serializerClass,data,obj = None,request = None) -> tuple :
     ''' creates or updates model object with serializer class , returns object and data as tuple'''

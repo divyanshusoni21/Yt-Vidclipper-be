@@ -1,0 +1,20 @@
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+
+# Version control & IDE metadata
+.git/
+.github/
+.gitignore
+.DS_Store
+
+# Local runtime data & logs
+log_files/
+celerybeat-schedule*
+*.log
+
+# Secrets (provided via docker-compose env_file at runtime)
+.env

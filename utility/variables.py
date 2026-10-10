@@ -14,4 +14,12 @@ defaultPassword = DEFAULT_PASSWORD
 projectLogo ="https://i.ibb.co/W4ph4tnj/Screenshot-2026-01-04-at-3-45-21-PM.png"
 proxies = PROXIES
 cookiesFile = COOKIES_FILE
-oldFileRetentionHours = 24 # Number of hours to retain old files before cleanup
+oldFileRetentionMinutes = 12*60 # Number of hours to retain old files before cleanup
+# Speed edits re-encode the whole file.
+maxSpeedEditBytes = 50 * 1024 * 1024
+minClipDurationInSec = 5
+maxClipDurationInSec = 60*5
+# Maximum number of crash starts allowed before considering a task a poison pill
+maxWorkerCrashStarts = 1
+# Cache expiration timeout for task worker start tracking (6 hours)
+crashCountTimeoutSeconds = 6 * 60 * 60

@@ -8,22 +8,21 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 
-from .models import ClipRequest, STATUS_CHOICES,User,Clip, SpeedEditRequest
+from .models import CLIP_STATUS_CHOICES, Clip, ClipRequest, SpeedEditRequest, User
 from .serializers import ClipRequestSerializer, SpeedEditRequestSerializer
-from .services import ClipProcessingService, SpeedEditService
 
 from utility.functions import runSerializer
 from utility.variables import defaultPassword
-import django_rq
+from yt_helper.celery import app as celery_app
 import traceback
-from datetime import timedelta
-from utility.functions import sendMail,format_validation_errors
-from rq.job import Job
-from rq.command import send_stop_job_command
-from rq.exceptions import InvalidJobOperation
-from threading import Thread
-from .tasks import cleanup_cancelled_task_dir,cleanup_old_files
-
+from utility.functions import sendMail, format_validation_errors
+from .tasks import (
+    cleanup_cancelled_dir_task,
+    cleanup_old_files,
+    process_clip_task,
+    process_speed_edit_task,
+)
+from .utils import update_obj_status
 
 
 class ClipRequestViewSet(viewsets.ModelViewSet):
@@ -46,50 +45,36 @@ class ClipRequestViewSet(viewsets.ModelViewSet):
         
         return context
 
-    @transaction.atomic
     def create(self, request, *args, **kwargs):
         """
         Create a new clip request using runSerializer with transaction management
         """
         try:
             logger.info(f"Creating new clip request with data: {request.data}")
-            
-            youtubeUrl = request.data.get('youtube_url')
 
-            # Validate YouTube URL and get video info
-            clipProcessingService = ClipProcessingService()
-            isValidYoutubeUrl = clipProcessingService.validate_youtube_url(youtubeUrl)
-
-            if not isValidYoutubeUrl:
-                raise Exception(f"Invalid YouTube URL: {youtubeUrl}")
-        
-            # create clip request
-            clipRequest, serializer = runSerializer(
-                ClipRequestSerializer, 
-                request.data, 
-                request=request
-            )
+            # Commit the row before the worker runs. Celery does not wait for this transaction.
+            with transaction.atomic():
+                clipRequest, serializer = runSerializer(
+                    ClipRequestSerializer, 
+                    request.data, 
+                    request=request
+                )
             
             try:
-                
-                queue = django_rq.get_queue('default')
-                rqJob = queue.enqueue(clipProcessingService.process_clip_request, clipRequest)
-                
-                jobId = rqJob.id
-                # logger.info(f"Queued background processing for clip request {clipRequest.id}, job ID: {jobId}")
-                
-                # # # Add job_id to response for tracking
-                clipRequest.rq_job_id = jobId
+                # Dispatch background processing task via Celery
+                celeryTask = process_clip_task.delay(str(clipRequest.id))
+
+                # Save celery task ID in existing rq_job_id field without requiring database migrations
+                clipRequest.rq_job_id = celeryTask.id
                 clipRequest.save(update_fields=['rq_job_id'])
 
-                responseData = ClipRequestSerializer(clipRequest,context={'request': request}).data
-                
+                responseData = ClipRequestSerializer(clipRequest, context={'request': request}).data
+
                 return Response(responseData, status=status.HTTP_201_CREATED)
-                
+
             except Exception as e:
-                clipRequest.status = STATUS_CHOICES[2][0] # failed
-                clipRequest.error_message = str(e)
-                clipRequest.save(update_fields=['status', 'error_message'])
+                # Update status to failed with error message
+                update_obj_status(clipRequest, status=CLIP_STATUS_CHOICES.FAILED, errorMessage=str(e))
                 raise Exception(e)
 
         except Exception as e:
@@ -114,7 +99,7 @@ class ClipRequestViewSet(viewsets.ModelViewSet):
             if not clipRequest:
                 raise Exception(f"Clip request not found: {clipRequestId}")
 
-            serializer = ClipRequestSerializer(clipRequest,context={'request': request})
+            serializer = ClipRequestSerializer(clipRequest,context={'request': request, 'exclude_fields':["processing_log","rq_job_id","proxy"]})
             return Response(serializer.data)
             
         except Exception as e:
@@ -124,15 +109,15 @@ class ClipRequestViewSet(viewsets.ModelViewSet):
                 'details': str(e)
             }, status=status.HTTP_400_BAD_REQUEST)
 
-    @action(detail=False, methods=['get'])   
+    @action(detail=False, methods=['get'])
     def send_clip_to_email(self,request):
         """
         Send email to the user with the clip request details
         """
         try:
             email = request.GET.get('email')
-
-            user = request.user
+            if not email :
+                raise Exception('User email is required')
 
             clipRequestId = request.GET.get('clip_request_id')
             if not clipRequestId:
@@ -142,27 +127,24 @@ class ClipRequestViewSet(viewsets.ModelViewSet):
             if not clipRequest:
                 raise Exception(f"Clip request not found: {clipRequestId}")
 
-            if not email :
-                if not user.is_authenticated:
-                    raise Exception('User email is required')
+            # Only send email when clip processing has successfully completed
+            if clipRequest.status != CLIP_STATUS_CHOICES.COMPLETED:
+                raise Exception(f"Cannot send email: clip request is in {clipRequest.status.upper()} state")
+            
+            user = User.objects.filter(email__iexact=email).first()
+                    
+            if not user:
+                # Create user with default password
+                user = User(
+                    username=email.split('@')[0],
+                    email=email,
+                    is_verified=True,
+                )
+                user.set_password(defaultPassword)
+                user.save()
 
-                email = user.email
             
             if not clipRequest.user: 
-            
-                if not user.is_authenticated :
-                    user = User.objects.filter(email__iexact=email).first()
-                    
-                    if not user:
-                        # Create user with default password
-                        user = User(
-                            username=email.split('@')[0],
-                            email=email,
-                            is_verified=True,
-                        )
-                        user.set_password(defaultPassword)
-                        user.save()
-
                 clipRequest.user = user
                 clipRequest.save(update_fields=['user'])
             
@@ -309,81 +291,37 @@ class SpeedEditViewSet(viewsets.ModelViewSet):
     """
     queryset = SpeedEditRequest.objects.all()
     serializer_class = SpeedEditRequestSerializer
-    permission_classes = [AllowAny]  # Adjust based on your auth requirements
+    permission_classes = [AllowAny] 
     
-    @transaction.atomic
     def create(self, request, *args, **kwargs):
         """
         Create a new speed edit request
         """
         try:
             logger.info(f"Creating speed edit request with data: {request.data}")
-
-            uploadedVideo = request.data.get('uploaded_video')
-            sourceClip = request.data.get('source_clip')
-
-            if not uploadedVideo and not sourceClip:
-                raise Exception(
-                    "Either 'uploaded_video' or 'source_clip' must be provided"
+            
+            # Commit the row before the worker runs. Celery does not wait for this transaction.
+            with transaction.atomic():
+                speedEditRequest, serializer = runSerializer(
+                    SpeedEditRequestSerializer,
+                    request.data,
+                    request=request
                 )
-        
-            if uploadedVideo and sourceClip:
-                raise Exception(
-                    "Provide either 'uploaded_video' or 'source_clip', not both"
-                )
-            
-            # Validate speed factor
-            speed_factor = float(request.data.get('speed_factor'))
-            if speed_factor is not None:
-                if speed_factor <= 0:
-                    raise Exception('Speed factor must be positive')
-                if speed_factor < 0.25 or speed_factor > 4.0:
-                    raise Exception('Speed factor must be between 0.25x and 4.0x')
-            
-            # If source_clip_id provided, verify it exists and map to source_clip
-            if sourceClip:
-                sourceClip = Clip.objects.filter(id=sourceClip).first()
-                if not sourceClip:
-                    raise Exception(f'Clip not found : {sourceClip}')
+            try :
+                # Dispatch background speed edit processing task via Celery
+                celeryTask = process_speed_edit_task.delay(str(speedEditRequest.id))
+                jobId = celeryTask.id
+                speedEditRequest.rq_job_id = jobId
+                speedEditRequest.save(update_fields=['rq_job_id'])
+                
+                responseData = SpeedEditRequestSerializer(speedEditRequest, context={'request': request}).data
+                
+                return Response(responseData, status=status.HTTP_201_CREATED)
+            except Exception as e:
+                # Update status to failed with error message
+                update_obj_status(speedEditRequest, status=CLIP_STATUS_CHOICES.FAILED, errorMessage=str(e))
+                raise Exception(e)
 
-            requestData = request.data.copy()
-            requestData["is_active"] = True
-            # Create the speed edit request
-            speedEditRequest, serializer = runSerializer(
-                SpeedEditRequestSerializer,
-                requestData,
-                request=request
-            )
-            
-            # Set user if authenticated
-            if request.user.is_authenticated:
-                speedEditRequest.user = request.user
-                speedEditRequest.save(update_fields=['user'])
-
-            # Get source video path
-            sourcePath = speedEditRequest.get_source_path()
-
-            # Get original file info
-            originalSizeBytes = os.path.getsize(sourcePath)
-            speedEditRequest.original_size = round(originalSizeBytes / (1024 * 1024), 2)
-            speedEditRequest.save(update_fields=['original_size'])
-            
-            # Process in background thread
-            speedEditService = SpeedEditService()
-
-            queue = django_rq.get_queue('default')
-            rqJob = queue.enqueue(speedEditService.process_speed_edit_request, speedEditRequest)
-            jobId = rqJob.id
-            speedEditRequest.rq_job_id = jobId
-            speedEditRequest.save(update_fields=['rq_job_id'])
-
-            # thread = Thread(target=speedEditService.process_speed_edit_request, args=(speedEditRequest,))
-            # thread.start()
-            
-            responseData = SpeedEditRequestSerializer(speedEditRequest, context={'request': request}).data
-            
-            return Response(responseData, status=status.HTTP_201_CREATED)
-            
         except Exception as e:
             e = format_validation_errors(e,self.get_exception_handler_context())
             logger.error(traceback.format_exc())
@@ -457,31 +395,31 @@ class CancelRequestViewSet(generics.GenericAPIView):
         jobWasRunning = False
 
         with transaction.atomic():
-            if not requestObj.status == STATUS_CHOICES[0][0]: # pending
+            if not (requestObj.status == CLIP_STATUS_CHOICES.PENDING or requestObj.status == CLIP_STATUS_CHOICES.PROCESSING):
                 raise Exception(f'Cannot cancel, {requestType} request is in {requestObj.status.upper()} state')
-            
+
             jobId = requestObj.rq_job_id
-            if jobId:
-                redisConn = django_rq.get_connection('default')
-                job = Job.fetch(jobId, connection=redisConn)
-                if job.get_status() == 'started':
-                    try:
-                        send_stop_job_command(redisConn, jobId)
-                        jobWasRunning = True
-                    except InvalidJobOperation:
-                        pass
-                else:
-                    job.cancel()
-                    job.delete()
-                    
-            logger.info(f"Cancelled {requestType} request {requestObj.id}, jobWasRunning: {jobWasRunning}")
-            requestObj.status = STATUS_CHOICES[3][0] # cancelled
-            requestObj.save(update_fields=['status'])
-        
+            # Commit cancelled before revoke. acks_late can redeliver the task, and it must see this status.
+            update_obj_status(requestObj, status=CLIP_STATUS_CHOICES.CANCELLED)
+
+        if jobId:
+            taskResult = celery_app.AsyncResult(jobId)
+            # STARTED means ffmpeg may already be running, so stop that worker child.
+            if taskResult.state == 'STARTED':
+                celery_app.control.revoke(jobId, terminate=True, signal='SIGTERM')
+                jobWasRunning = True
+            else:
+                # Still queued. Revoke so a worker that reserved it will drop it.
+                celery_app.control.revoke(jobId)
+
+        logger.info(f"Cancelled {requestType} request {requestObj.id}, jobWasRunning: {jobWasRunning}")
+
         if jobWasRunning:
-            queue = django_rq.get_queue('default')
-            # cleanup the task directory after 30 seconds
-            queue.enqueue_in(timedelta(seconds=30), cleanup_cancelled_task_dir, requestObj, requestType)
+            # Wait so a stopped ffmpeg can release the folder before we delete it.
+            cleanup_cancelled_dir_task.apply_async(
+                args=[str(requestObj.id), requestType],
+                countdown=30,
+            )
 
 
 class CleanupOldFilesViewSet(generics.GenericAPIView):
@@ -492,9 +430,11 @@ class CleanupOldFilesViewSet(generics.GenericAPIView):
 
     def get(self, request):
         try:
-            Thread(target=cleanup_old_files).start()
+            cleanup_old_files.delay()
             return Response(status=status.HTTP_200_OK)
         except Exception as e:
             logger.error(traceback.format_exc())
             return Response({
+                'error': 'Failed to trigger cleanup task',
+                'details': str(e),
             }, status=status.HTTP_400_BAD_REQUEST)
