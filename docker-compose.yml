@@ -1,0 +1,104 @@
+services:
+  # 1. Redis: Message broker for Celery tasks and result/cache backend
+  redis:
+    image: redis:7-alpine
+    container_name: yt_helper_redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # 2. PostgreSQL Database
+  db:
+    image: postgres:16-alpine
+    container_name: yt_helper_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USERNAME}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME} -d ${DB_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 3. Django Web Application (Gunicorn)
+  web:
+    build: .
+    container_name: yt_helper_web
+    restart: unless-stopped
+    command: sh -c "python manage.py migrate &&
+           gunicorn yt_helper.wsgi:application --bind 0.0.0.0:8000 --workers 1 --threads 2 --timeout 60 --max-requests 100 --max-requests-jitter 50"
+
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      # Override hostnames to connect to Docker container service names
+      - REDIS_HOST=redis
+      - DB_HOST=db
+    volumes:
+      # Mount entire project directory to /app for instant code updates and shared media/logs
+      - ./:/app
+    depends_on:
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+
+  # 4. Celery Video Worker: Dedicated to heavy CPU/memory video clipping and speed edits
+  celery_video:
+    build: .
+    container_name: yt_helper_celery_video
+    restart: unless-stopped
+    command: celery -A yt_helper worker -Q video -c 1 -l info --prefetch-multiplier=1 --max-tasks-per-child=10 --max-memory-per-child=300000
+    env_file:
+      - .env
+    environment:
+      - REDIS_HOST=redis
+      - DB_HOST=db
+    volumes:
+      # Mount entire project directory to /app for instant code updates and shared media/logs
+      - ./:/app
+    depends_on:
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+
+
+  # 5. Celery Default Worker + Beat Scheduler: Lightweight I/O (emails) and periodic file cleanups
+  celery_default:
+    build: .
+    container_name: yt_helper_celery_default
+    restart: unless-stopped
+    command: celery -A yt_helper worker --pool=threads -Q default -c 2 -B -l info
+    env_file:
+      - .env
+    environment:
+      - REDIS_HOST=redis
+      - DB_HOST=db
+    volumes:
+      # Mount entire project directory to /app for instant code updates and shared media/logs
+      - ./:/app
+    depends_on:
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+
+volumes:
+  redis_data:
+  pgdata:

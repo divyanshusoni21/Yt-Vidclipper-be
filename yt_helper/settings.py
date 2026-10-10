@@ -90,19 +90,15 @@ AUTH_USER_MODEL = 'home.User'
 # https://docs.djangoproject.com/en/4.0/ref/settings/#databases
 
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
-    }
 
-    # "default": {
-    #     "ENGINE": "django.db.backends.postgresql_psycopg2",
-    #     "NAME": os.environ.get("DB_NAME", ""),
-    #     "USER": os.environ.get("DB_USERNAME", ""),
-    #     "PASSWORD": os.environ.get("DB_PASSWORD", ""),
-    #     "HOST": os.environ.get("DB_HOST", ""),
-    #     "PORT": "",
-    # }
+    "default": {
+        "ENGINE": "django.db.backends.postgresql_psycopg2",
+        "NAME": os.environ.get("DB_NAME", ""),
+        "USER": os.environ.get("DB_USERNAME", ""),
+        "PASSWORD": os.environ.get("DB_PASSWORD", ""),
+        "HOST": os.environ.get("DB_HOST", ""),
+        "PORT": "",
+    }
 }
 
 
@@ -212,9 +208,9 @@ SIMPLE_JWT = {
 FILE_UPLOAD_MAX_MEMORY_SIZE = 50 * 1024 * 1024 # 50 Mb limit
 
 # Redis connection pieces. Celery broker, result backend, and queues are set in celery.py.
-REDIS_HOST = os.environ.get('REDIS_HOST', 'localhost')
-REDIS_PORT = os.environ.get('REDIS_PORT', 6379)
-REDIS_DB = os.environ.get('REDIS_DB', 0)
+REDIS_HOST = os.environ.get('REDIS_HOST', '')
+REDIS_PORT = os.environ.get('REDIS_PORT','')
+REDIS_DB = os.environ.get('REDIS_DB', '')
 
 # Shared Redis cache so a crash counter survives a dead worker child.
 # LocMem would vanish with the child and could not stop a crash loop.

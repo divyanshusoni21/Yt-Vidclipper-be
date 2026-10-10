@@ -3,20 +3,61 @@
 from django.db import migrations, models
 
 
+def alter_time_fields(apps, schema_editor):
+    """
+    PostgreSQL requires an explicit USING clause to convert integer seconds
+    to a TIME column, because integer::time is not a built-in cast.
+    """
+    if schema_editor.connection.vendor == "postgresql":
+        schema_editor.execute(
+            """
+            ALTER TABLE clip_request 
+            ALTER COLUMN start_time TYPE time WITHOUT TIME ZONE 
+            USING ('00:00:00'::time + (start_time * interval '1 second')),
+            ALTER COLUMN end_time TYPE time WITHOUT TIME ZONE 
+            USING ('00:00:00'::time + (end_time * interval '1 second'));
+            """
+        )
+
+
+def reverse_alter_time_fields(apps, schema_editor):
+    """Convert TIME back to integer seconds for rollback."""
+    if schema_editor.connection.vendor == "postgresql":
+        schema_editor.execute(
+            """
+            ALTER TABLE clip_request 
+            ALTER COLUMN start_time TYPE integer 
+            USING EXTRACT(EPOCH FROM start_time)::integer,
+            ALTER COLUMN end_time TYPE integer 
+            USING EXTRACT(EPOCH FROM end_time)::integer;
+            """
+        )
+
+
 class Migration(migrations.Migration):
-    dependencies = [
+    dependencies = [  # noqa: RUF012
         ("home", "0001_initial"),
     ]
 
-    operations = [
-        migrations.AlterField(
-            model_name="cliprequest",
-            name="end_time",
-            field=models.TimeField(),
-        ),
-        migrations.AlterField(
-            model_name="cliprequest",
-            name="start_time",
-            field=models.TimeField(),
+    operations = [  # noqa: RUF012
+        migrations.SeparateDatabaseAndState(
+            state_operations=[
+                migrations.AlterField(
+                    model_name="cliprequest",
+                    name="end_time",
+                    field=models.TimeField(),
+                ),
+                migrations.AlterField(
+                    model_name="cliprequest",
+                    name="start_time",
+                    field=models.TimeField(),
+                ),
+            ],
+            database_operations=[
+                migrations.RunPython(
+                    alter_time_fields,
+                    reverse_code=reverse_alter_time_fields,
+                ),
+            ],
         ),
     ]

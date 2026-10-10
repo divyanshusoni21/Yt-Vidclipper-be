@@ -14,3 +14,4 @@ yt-dlp[default,curl-cffi]
 yt-dlp-ejs
 ffmpeg-python
 celery
+psycopg2-binary
