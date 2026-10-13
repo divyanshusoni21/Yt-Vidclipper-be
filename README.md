@@ -2,6 +2,9 @@
 
 [![Live Demo](https://img.shields.io/badge/Live-Demo-brightgreen.svg)](https://yt-vidclipper-fe.vercel.app/)
 [![Frontend Repo](https://img.shields.io/badge/Frontend-Repository-blue.svg)](https://github.com/divyanshusoni21/Yt-vidclipper-fe)
+[![Docker](https://img.shields.io/badge/Docker-Enabled-2496ED.svg?logo=docker&logoColor=white)](https://www.docker.com/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-336791.svg?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![Celery](https://img.shields.io/badge/Celery-Distributed_Tasks-37814A.svg?logo=celery&logoColor=white)](https://docs.celeryq.dev/)
 
 
 A Django web application that allows users to extract specific segments from YouTube videos by providing a YouTube URL and timestamp range. The system handles video downloading, clipping, and serving the processed clip back to the user for download.
@@ -13,7 +16,7 @@ A Django web application that allows users to extract specific segments from You
 
 - Extract clips from YouTube videos using URL and timestamp range
 - Background processing with real-time status updates
-- Adjust clip playback speed from 0.25x to 4.0x (upload your own video or use a generated clip)
+- Adjust clip playback speed from 0.25x to 2.0x (upload your own video or use a generated clip)
 
 ## Efficiently Handles :
 - Cancellation of an ongoing process of clip cutting and video playback speed adjustment
@@ -21,43 +24,38 @@ A Django web application that allows users to extract specific segments from You
 
 ## Required Software
 
-- **Python 3.8+** - Programming language runtime
-- **FFmpeg** - Video processing library (required for clipping functionality)
-- **Redis** - In-memory data store and message broker (required for Celery task processing and crash tracking)
+*   **Docker & Docker Compose** (*Recommended* — orchestrates Django, Celery workers, Redis, and PostgreSQL in isolated containers)
+*   **Or for manual local setup without Docker:**
+    *   **Python 3.11+**
+    *   **PostgreSQL 16**
+    *   **Redis** (In-memory message broker & cache)
+    *   **FFmpeg** (Video clipping & playback speed adjustment)
+    *   **Deno** (JavaScript runtime required by `yt-dlp-ejs` to solve YouTube challenges)
 
+---
 
-## Installation
+## Running the Application
 
-### 1. Python Environment Setup
+### 🚀 Option 1: Running with Docker Compose (Recommended)
 
-```bash
-# Clone the repository
-git clone <repository-url>
-cd yt_helper
+Docker Compose is the fastest and easiest way to spin up the entire backend stack with a single command.
 
-# Create virtual environment
-python -m venv venv
-
-# Activate virtual environment
-# On macOS/Linux:
-source venv/bin/activate
-# On Windows:
-venv\Scripts\activate
-
-# Install Python dependencies
-pip install -r requirements.txt
-```
-
-### 2. Environment Configuration
-
+#### 1. Configure Environment Variables
 Create a `.env` file in the project root:
-
 ```env
 # Django Settings
 SECRET_KEY=your-secret-key-here
 DEBUG=True
 
-# Redis Configuration (optional - defaults to localhost)
+# Database Configuration (PostgreSQL)
+# Note: Inside Docker, DB_HOST is automatically routed to 'db'
+DB_NAME=yt_helper
+DB_USERNAME=postgres
+DB_PASSWORD=your_password_here
+DB_HOST=localhost
+
+# Redis Configuration
+# Note: Inside Docker, REDIS_HOST is automatically routed to 'redis'
 REDIS_HOST=localhost
 REDIS_PORT=6379
 REDIS_DB=0
@@ -66,80 +64,127 @@ ADMIN_EMAIL=divyanshusoni061@gmail.com
 ADMIN_PHONE=917372958746
 FRONTEND_URL=http://localhost:8000
 
-DEFAULT_PASSWORD=defualtPassword # default password used to create user
+DEFAULT_PASSWORD=defaultPassword
 
 CSRF_TRUSTED_ORIGINS=http://127.1.1:8000,http://localhost:3000,http://localhost:5173
-
 ALLOWED_HOSTS=127.0.0.1,localhost
-
 CORS_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173
 
-BREVO_API_KEY=brevoapikey # used to send emails
-
-PROXIES=http://username:password@domain,http://username:password@domain2 # required if using the project in a server
-
+BREVO_API_KEY=your_brevo_api_key
+PROXIES=http://username:password@domain
 ```
 
-### 3. System Dependencies
-
-Ensure FFmpeg and Redis are installed:
-
-- **macOS**: `brew install ffmpeg redis`
-- **Ubuntu/Debian**: `sudo apt install ffmpeg redis-server`
-- **Windows**: Download from [ffmpeg.org](https://ffmpeg.org/download.html) and [redis.io](https://redis.io/download)
-
-### 4. Database Setup
-
+#### 2. Start All Services
 ```bash
-# Run database migrations
+docker compose up --build
+```
+Or run in the background (detached):
+```bash
+docker compose up -d --build
+```
+
+#### What Services Are Running:
+| Service | Container Name | Host Port | Internal Port | Description |
+|---|---|---|---|---|
+| `web` | `yt_helper_web` | `8000` | `8000` | Django API on Gunicorn (automatically runs migrations on startup) |
+| `db` | `yt_helper_db` | `5433` | `5432` | PostgreSQL 16 database with persistent storage (`pgdata` volume) |
+| `redis` | `yt_helper_redis` | `6379` | `6379` | Redis message broker & cache backend |
+| `celery_video` | `yt_helper_celery_video` | - | - | Dedicated video worker (CPU-bound clipping & speed edits) |
+| `celery_default`| `yt_helper_celery_default`| - | - | Default worker + Celery Beat (I/O, emails & periodic file cleanup) |
+
+> **Host Port Note:** PostgreSQL is mapped to `5433:5432` on your host so it will never collide if you already have a native PostgreSQL running locally on port `5432`. Inside Docker, Django connects directly to `db:5432`.
+
+#### Useful Docker Commands:
+```bash
+# View live logs from all containers
+docker compose logs -f
+
+# View logs for a specific service
+docker compose logs -f web
+docker compose logs -f celery_video
+docker compose logs -f celery_default
+
+# Run migrations manually inside the web container (if needed)
+docker compose exec web python manage.py migrate
+
+# Create a Django superuser
+docker compose exec web python manage.py createsuperuser
+
+# Stop all containers
+docker compose down
+```
+
+---
+
+### 🛠️ Option 2: Running Locally Without Docker (Manual Setup)
+
+If you prefer to run services natively on your local machine:
+
+#### 1. Python Environment Setup
+```bash
+# Clone the repository
+git clone <repository-url>
+cd yt_helper
+
+# Create virtual environment
+python3 -m venv venv
+
+# Activate virtual environment
+# macOS/Linux:
+source venv/bin/activate
+# Windows:
+venv\Scripts\activate
+
+# Install Python dependencies
+pip install -r requirements.txt
+```
+
+#### 2. Install System Dependencies
+Ensure FFmpeg, Redis, PostgreSQL, and Deno are installed:
+- **macOS**: `brew install ffmpeg redis postgresql@16 deno`
+- **Ubuntu/Debian**: `sudo apt install ffmpeg redis-server postgresql` and install [Deno](https://deno.com/)
+- **Windows**: Download from [ffmpeg.org](https://ffmpeg.org/download.html), [redis.io](https://redis.io/download), and [postgresql.org](https://www.postgresql.org/download/)
+
+#### 3. Database & Migrations Setup
+Create a PostgreSQL database matching your `.env` settings (`DB_NAME`, `DB_USERNAME`, `DB_PASSWORD`), then run:
+```bash
 python manage.py migrate
-
-# Create superuser (optional)
-python manage.py createsuperuser
+python manage.py createsuperuser  # Optional
 ```
 
-### 5. Verify Installation
-
+#### 4. Verify Installation
 ```bash
-# Test FFmpeg installation
 ffmpeg -version
-
-# Test Redis connection
 redis-cli ping
-
-# Test Django setup
 python manage.py check
 ```
 
-## Running the Application
+#### 5. Start Services Locally
+You will need 4 separate terminal tabs:
 
-### Development Mode
+- **Terminal 1 (Redis)**:
+  ```bash
+  redis-server
+  ```
+- **Terminal 2 (Django Web Server)**:
+  ```bash
+  source venv/bin/activate
+  python manage.py runserver
+  ```
+- **Terminal 3 (Celery Video Worker)**:
+  ```bash
+  source venv/bin/activate
+  celery -A yt_helper worker -Q video -c 1 -l info --prefetch-multiplier=1 --max-tasks-per-child=10 --max-memory-per-child=300000
+  ```
+- **Terminal 4 (Celery Default Worker + Beat Scheduler)**:
+  ```bash
+  source venv/bin/activate
+  celery -A yt_helper worker --pool=threads -Q default -c 2 -B -l info
+  ```
 
-1. **Start Redis** (if not running as a service):
-   ```bash
-   redis-server
-   ```
-
-2. **Start Django development server**:
-   ```bash
-   python manage.py runserver
-   ```
-
-3. **Start Celery workers** (in separate terminal windows):
-
-   - **Terminal 1: Video Processing Worker** (for heavy CPU/memory video clipping and speed adjustments):
-     ```bash
-     celery -A yt_helper worker -Q video -c 1 -l info --prefetch-multiplier=1 --max-tasks-per-child=10 --max-memory-per-child=300000
-     ```
-
-   - **Terminal 2: Default Worker + Beat Scheduler** (for lightweight network I/O, email delivery, and periodic cleanups):
-     ```bash
-     celery -A yt_helper worker --pool=threads -Q default -c 2 -B  -l info
-     ```
-
-4. **Access the application**:
-   - Admin interface: http://127.0.0.1:8000/admin/
-   - API endpoints: http://127.0.0.1:8000/api/
+#### 6. Access the Application
+- Admin interface: http://127.0.0.1:8000/admin/
+- API endpoints: http://127.0.0.1:8000/api/
 
 ### Logs
 
