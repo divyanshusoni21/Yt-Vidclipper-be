@@ -136,8 +136,8 @@ class SpeedEditRequestSerializer(FieldMixin, serializers.ModelSerializer):
         """
         if value <= 0:
             raise serializers.ValidationError("Speed factor must be positive")
-        if value < 0.25 or value > 4.0:
-            raise serializers.ValidationError("Speed factor must be between 0.25x and 4.0x")
+        if value < 0.25 or value > 2.0:
+            raise serializers.ValidationError("Speed factor must be between 0.25x and 2.0x")
         return value
 
     def validate_uploaded_video(self, value):
