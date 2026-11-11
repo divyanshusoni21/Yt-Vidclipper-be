@@ -4,8 +4,6 @@ services:
     image: redis:7-alpine
     container_name: yt_helper_redis
     restart: unless-stopped
-    ports:
-      - "${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -23,8 +21,6 @@ services:
       POSTGRES_DB: ${DB_NAME}
       POSTGRES_USER: ${DB_USERNAME}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
-    ports:
-      - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -42,7 +38,7 @@ services:
            gunicorn yt_helper.wsgi:application --bind 0.0.0.0:8000 --workers 1 --threads 2 --timeout 60 --max-requests 100 --max-requests-jitter 50"
 
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     env_file:
       - .env
     environment:
