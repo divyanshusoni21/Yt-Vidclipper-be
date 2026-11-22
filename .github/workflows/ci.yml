@@ -71,6 +71,7 @@ jobs:
           ADMIN_EMAIL=test@test.com
           BREVO_API_KEY=dummy
           COOKIES_FILE=cookies.txt
+          DEFAULT_PASSWORD=ci-test-default-password
           EOF
 
       - name: Run Django system check
@@ -81,6 +82,9 @@ jobs:
 
       - name: Run database migrations
         run: python manage.py migrate
+
+      - name: Run Django tests
+        run: python manage.py test
 
   docker-build:
     name: Docker build test

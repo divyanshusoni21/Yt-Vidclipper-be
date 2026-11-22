@@ -22,16 +22,18 @@ from .tasks import (
     process_clip_task,
     process_speed_edit_task,
 )
+from .throttles import CreateActionThrottleMixin, ClipBurstThrottle,ClipHourlyThrottle,SpeedEditBurstThrottle,SpeedEditHourlyThrottle
 from .utils import update_obj_status
 
 
-class ClipRequestViewSet(viewsets.ModelViewSet):
+class ClipRequestViewSet(CreateActionThrottleMixin, viewsets.ModelViewSet):
     """
     ViewSet for managing clip requests with full CRUD operations
     Follows established patterns with proper error handling and logging
     """
     queryset = ClipRequest.objects.all()
     serializer_class = ClipRequestSerializer
+    create_throttle_classes = [ClipBurstThrottle, ClipHourlyThrottle]
 
     def get_serializer_context(self):
         """
@@ -284,7 +286,7 @@ class DownloadClipViewSet(viewsets.ViewSet):
         return fileName
 
 
-class SpeedEditViewSet(viewsets.ModelViewSet):
+class SpeedEditViewSet(CreateActionThrottleMixin, viewsets.ModelViewSet):
     """
     ViewSet for speed editing service
     Allows users to upload videos or select existing clips and adjust playback speed
@@ -292,6 +294,7 @@ class SpeedEditViewSet(viewsets.ModelViewSet):
     queryset = SpeedEditRequest.objects.all()
     serializer_class = SpeedEditRequestSerializer
     permission_classes = [AllowAny] 
+    create_throttle_classes = [SpeedEditBurstThrottle,SpeedEditHourlyThrottle]
     
     def create(self, request, *args, **kwargs):
         """

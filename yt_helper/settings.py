@@ -28,7 +28,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = os.environ.get("SECRET_KEY", "")
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.environ.get("DEBUG", False)
+DEBUG = os.environ.get("DEBUG", False).strip().lower() == "true"
 
 
 ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS','127.0.0.1').split(',')
@@ -185,7 +185,6 @@ ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL","divyanshusoni.relish@gmail.com")
 ADMIN_PHONE = os.environ.get("ADMIN_PHONE","")
 FRONTEND_URL = os.environ.get("FRONTEND_URL","http://localhost:3000")
 BREVO_API_KEY = os.environ.get("BREVO_API_KEY","")
-RAPIDAPI_KEY = os.environ.get("RAPIDAPI_KEY","")
 DEFAULT_PASSWORD = os.environ.get("DEFAULT_PASSWORD")
 
 PROXIES = os.environ.get("PROXIES", "").split(",")
@@ -196,9 +195,15 @@ REST_FRAMEWORK = {
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
 
-    'DEFAULT_FILTER_BACKENDS': ['django_filters.rest_framework.DjangoFilterBackend']
+    'DEFAULT_FILTER_BACKENDS': ['django_filters.rest_framework.DjangoFilterBackend'],
+
+    # Number of trusted reverse proxies in front of Django (0 locally, 1 behind Nginx)
+    'NUM_PROXIES': int(os.environ.get('NUM_PROXIES') or 0),
 
 }
+
+# Default to True so rate limiting stays active in production unless explicitly disabled locally
+ENABLE_RATE_LIMIT = os.environ.get("ENABLE_RATE_LIMIT", "True").strip().lower() == "true"
 
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(days=1),
