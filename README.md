@@ -218,7 +218,7 @@ The project splits background workloads into two distinct queues (`video` and `d
        ├──────────────────────┤  ├─────────────────────────┤
        │ • Video clipping     │  │ • Transactional emails  │
        │ • Video speed edits  │  │ • Cancelled folder wipe │
-       │ • Heavy FFmpeg jobs  │  │ • Periodic file cleanup │
+       │                      │  │ • Periodic file cleanup │
        └──────────────────────┘  └─────────────────────────┘
 ```
 
@@ -329,27 +329,3 @@ Background workers must survive unexpected power loss, worker crashes, or OS kil
 - pip install --upgrade yt-dlp
 - pip install --upgrade yt-dlp-ejs
 These updates the ytdlp package so that project runs smoothly
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests for new functionality
-5. Submit a pull request
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Support
-
-For support and questions:
-- Create an issue on GitHub
-- Check the troubleshooting section above
-- Review the application logs for error details
-
-
-## Future features
-1. multiple timerange clips  of one video
-2. Support of twitter media download

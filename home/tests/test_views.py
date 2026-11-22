@@ -7,6 +7,8 @@ import uuid
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from django.conf import settings
+from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
 from django.urls import reverse
@@ -23,11 +25,20 @@ from home.models import (
 )
 from home.views import DownloadClipViewSet
 
+TEST_THROTTLE_CACHE = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "test-views-throttle",
+    }
+}
 
+
+@override_settings(CACHES=TEST_THROTTLE_CACHE)
 class ClipRequestViewSetTest(APITestCase):
     """Tests for ClipRequestViewSet endpoints (list, create, task_status, send_clip_to_email)."""
 
     def setUp(self):
+        cache.clear()
         self.clipRequest = ClipRequest.objects.create(
             youtube_url="https://www.youtube.com/watch?v=dQw4w9WgXcQ",
             start_time=datetime.time(0, 0, 10),
@@ -220,10 +231,12 @@ class DownloadClipViewSetTest(APITestCase):
         self.assertEqual(fileName, f"{'A' * 50}_480p.mp4")
 
 
+@override_settings(CACHES=TEST_THROTTLE_CACHE)
 class SpeedEditViewSetTest(APITestCase):
     """Tests for SpeedEditViewSet create and status endpoints."""
 
     def setUp(self):
+        cache.clear()
         self.tempMediaDir = tempfile.mkdtemp()
         self.overrideMedia = override_settings(MEDIA_ROOT=self.tempMediaDir)
         self.overrideMedia.enable()
@@ -347,3 +360,211 @@ class CancelAndCleanupViewSetsTest(APITestCase):
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         mockCleanupDelay.assert_called_once()
+
+
+@override_settings(CACHES=TEST_THROTTLE_CACHE, ENABLE_RATE_LIMIT=True)
+class MediaProcessThrottlingTest(APITestCase):
+    """Tests for per-endpoint burst and hourly throttling on clip and speed-edit creation."""
+
+    def setUp(self):
+        cache.clear()
+        self.tempMediaDir = tempfile.mkdtemp()
+        self.overrideMedia = override_settings(MEDIA_ROOT=self.tempMediaDir)
+        self.overrideMedia.enable()
+
+        self.clipRequest = ClipRequest.objects.create(
+            youtube_url="https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            start_time=datetime.time(0, 0, 10),
+            end_time=datetime.time(0, 0, 20),
+        )
+        self.clipObj = Clip.objects.create(
+            clip_request=self.clipRequest,
+            clip=SimpleUploadedFile("clip.mp4", b"clip-bytes", content_type="video/mp4"),
+            resolution=CLIP_RESOLUTION.RES_720P,
+            size=1.0,
+        )
+        self.clipPayload = {
+            "youtube_url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "start_time": "00:00:05",
+            "end_time": "00:00:20",
+        }
+        self.speedPayload = {
+            "source_clip": str(self.clipObj.id),
+            "speed_factor": 1.5,
+        }
+
+    def tearDown(self):
+        cache.clear()
+        self.overrideMedia.disable()
+        shutil.rmtree(self.tempMediaDir, ignore_errors=True)
+
+    @patch("home.services.ClipProcessingService._check_ffmpeg")
+    @patch("home.views.process_speed_edit_task.delay")
+    @patch("home.views.process_clip_task.delay")
+    def test_clip_burst_limit_blocks_fourth_request_without_affecting_speed_edit_or_polling(
+        self, mockClipDelay, mockSpeedDelay, mockCheckFfmpeg
+    ):
+        # Clip creation allows 3/min; 4th returns 429 while polling and speed-edit remain unaffected
+        mockClipDelay.return_value = SimpleNamespace(id="clip-job")
+        mockSpeedDelay.return_value = SimpleNamespace(id="speed-job")
+
+        clipUrl = reverse("clip-request-list")
+        speedUrl = reverse("speed-edit-list")
+
+        for _ in range(3):
+            self.assertEqual(
+                self.client.post(clipUrl, self.clipPayload, format="json").status_code,
+                status.HTTP_201_CREATED,
+            )
+
+        blockedClipRes = self.client.post(clipUrl, self.clipPayload, format="json")
+        self.assertEqual(blockedClipRes.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+        self.assertIn("Retry-After", blockedClipRes.headers)
+
+        # Speed edit has its own bucket so it must still succeed
+        self.assertEqual(
+            self.client.post(speedUrl, self.speedPayload, format="json").status_code,
+            status.HTTP_201_CREATED,
+        )
+
+        # Clip status polling must remain accessible even after clip create is throttled
+        clipStatusRes = self.client.get(
+            reverse("clip-request-task-status"),
+            {"clip_request_id": str(self.clipRequest.id)},
+        )
+        self.assertEqual(clipStatusRes.status_code, status.HTTP_200_OK)
+
+    @patch("home.services.ClipProcessingService._check_ffmpeg")
+    @patch("home.views.process_clip_task.delay")
+    @patch("home.views.process_speed_edit_task.delay")
+    def test_speed_edit_burst_limit_blocks_sixth_request_without_affecting_clip_or_polling(
+        self, mockSpeedDelay, mockClipDelay, mockCheckFfmpeg
+    ):
+        # Speed edit creation allows 5/min; 6th returns 429 while polling and clip creation stay open
+        mockSpeedDelay.return_value = SimpleNamespace(id="speed-job")
+        mockClipDelay.return_value = SimpleNamespace(id="clip-job")
+
+        speedUrl = reverse("speed-edit-list")
+        clipUrl = reverse("clip-request-list")
+
+        for _ in range(5):
+            self.assertEqual(
+                self.client.post(speedUrl, self.speedPayload, format="json").status_code,
+                status.HTTP_201_CREATED,
+            )
+
+        blockedSpeedRes = self.client.post(speedUrl, self.speedPayload, format="json")
+        self.assertEqual(blockedSpeedRes.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+        self.assertIn("Retry-After", blockedSpeedRes.headers)
+
+        # Clip creation has its own bucket so it must still succeed
+        self.assertEqual(
+            self.client.post(clipUrl, self.clipPayload, format="json").status_code,
+            status.HTTP_201_CREATED,
+        )
+
+        speedEdit = SpeedEditRequest.objects.create(source_clip=self.clipObj, speed_factor=1.5)
+        speedStatusRes = self.client.get(
+            reverse("speed-edit-status"),
+            {"request_id": str(speedEdit.id)},
+        )
+        self.assertEqual(speedStatusRes.status_code, status.HTTP_200_OK)
+
+    @patch("home.services.ClipProcessingService._check_ffmpeg")
+    @patch("home.views.process_clip_task.delay")
+    def test_clip_hourly_limit_blocks_sixteenth_request_across_minutes(self, mockClipDelay, mockCheckFfmpeg):
+        # Simulate 5 bursts of 3 clip requests spaced 70s apart (15 total); 16th must hit 15/hour cap
+        mockClipDelay.return_value = SimpleNamespace(id="clip-job")
+        clipUrl = reverse("clip-request-list")
+        fakeClock = {"now": 1_000_000.0}
+
+        def current_time():
+            return fakeClock["now"]
+
+        with (
+            patch("home.throttles.ClipBurstThrottle.timer", side_effect=current_time),
+            patch("home.throttles.ClipHourlyThrottle.timer", side_effect=current_time),
+        ):
+            for _ in range(5):
+                for _ in range(3):
+                    res = self.client.post(clipUrl, self.clipPayload, format="json")
+                    self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+                # Advance >60s after each batch so the 3/min burst resets and the 16th hits 15/hour
+                fakeClock["now"] += 70.0
+
+            blockedRes = self.client.post(clipUrl, self.clipPayload, format="json")
+            self.assertEqual(blockedRes.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+
+    @patch("home.views.process_speed_edit_task.delay")
+    def test_speed_edit_hourly_limit_blocks_twenty_first_request_across_minutes(self, mockSpeedDelay):
+        # Simulate 4 bursts of 5 speed-edit requests spaced 70s apart (20 total); 21st must hit 20/hour cap
+        mockSpeedDelay.return_value = SimpleNamespace(id="speed-job")
+        speedUrl = reverse("speed-edit-list")
+        fakeClock = {"now": 2_000_000.0}
+
+        def current_time():
+            return fakeClock["now"]
+
+        with (
+            patch("home.throttles.SpeedEditBurstThrottle.timer", side_effect=current_time),
+            patch("home.throttles.SpeedEditHourlyThrottle.timer", side_effect=current_time),
+        ):
+            for _ in range(4):
+                for _ in range(5):
+                    res = self.client.post(speedUrl, self.speedPayload, format="json")
+                    self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+                # Advance >60s after each batch so the 5/min burst resets and the 21st hits 20/hour
+                fakeClock["now"] += 70.0
+
+            blockedRes = self.client.post(speedUrl, self.speedPayload, format="json")
+            self.assertEqual(blockedRes.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+
+    @patch("home.services.ClipProcessingService._check_ffmpeg")
+    @patch("home.views.process_clip_task.delay")
+    def test_num_proxies_reads_trusted_client_ip_from_forwarded_header(
+        self, mockClipDelay, mockCheckFfmpeg
+    ):
+        # With NUM_PROXIES=1, DRF reads the rightmost X-Forwarded-For IP added by Nginx, ignoring spoofed prefixes
+        mockClipDelay.return_value = SimpleNamespace(id="clip-job")
+        clipUrl = reverse("clip-request-list")
+        proxyRestSettings = {**settings.REST_FRAMEWORK, "NUM_PROXIES": 1}
+
+        with override_settings(REST_FRAMEWORK=proxyRestSettings):
+            for spoofedIp in ("1.1.1.1", "2.2.2.2", "3.3.3.3"):
+                res = self.client.post(
+                    clipUrl,
+                    self.clipPayload,
+                    format="json",
+                    HTTP_X_FORWARDED_FOR=f"{spoofedIp}, 203.0.113.10",
+                )
+                self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+
+            # 4th request from same real client IP (203.0.113.10) is blocked despite new spoofed prefix
+            blockedRes = self.client.post(
+                clipUrl,
+                self.clipPayload,
+                format="json",
+                HTTP_X_FORWARDED_FOR="4.4.4.4, 203.0.113.10",
+            )
+            self.assertEqual(blockedRes.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+
+            # Different real client IP gets its own fresh bucket
+            otherIpRes = self.client.post(
+                clipUrl,
+                self.clipPayload,
+                format="json",
+                HTTP_X_FORWARDED_FOR="203.0.113.99",
+            )
+            self.assertEqual(otherIpRes.status_code, status.HTTP_201_CREATED)
+
+    @override_settings(ENABLE_RATE_LIMIT=False)
+    @patch("home.services.ClipProcessingService._check_ffmpeg")
+    @patch("home.views.process_clip_task.delay")
+    def test_rate_limit_can_be_disabled_via_setting(self, mockClipDelay, mockCheckFfmpeg):
+        # When ENABLE_RATE_LIMIT is False (e.g. local dev), requests beyond 3/min are not throttled
+        mockClipDelay.return_value = SimpleNamespace(id="clip-job")
+        clipUrl = reverse("clip-request-list")
+
+        for _ in range(4):
+            res = self.client.post(clipUrl, self.clipPayload, format="json")
+            self.assertEqual(res.status_code, status.HTTP_201_CREATED)
