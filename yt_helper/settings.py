@@ -187,7 +187,8 @@ FRONTEND_URL = os.environ.get("FRONTEND_URL","http://localhost:3000")
 BREVO_API_KEY = os.environ.get("BREVO_API_KEY","")
 DEFAULT_PASSWORD = os.environ.get("DEFAULT_PASSWORD")
 
-PROXIES = os.environ.get("PROXIES", "").split(",")
+# Ignore empty entries so an unset/blank PROXIES env var yields [] instead of [""]
+PROXIES = [proxy.strip() for proxy in os.environ.get("PROXIES", "").split(",") if proxy.strip()]
 COOKIES_FILE = os.environ.get("COOKIES_FILE", "")
 REST_FRAMEWORK = {
 

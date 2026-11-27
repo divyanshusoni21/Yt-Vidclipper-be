@@ -66,24 +66,19 @@ class ClipProcessingService:
             )
   
     def get_proxy(self) -> str:
-        
-        # get latest proxy used in clip request
+        # Filter blank entries so misconfigured env values never produce an empty proxy string
+        allProxies = [proxy.strip() for proxy in proxies if proxy and proxy.strip()]
+        if not allProxies:
+            return ""
+
+        # Avoid reusing the most recently used proxy when multiple proxies are available
         latestUsedProxy = ""
         clipRequest = ClipRequest.objects.order_by('-created_at').first()
         if clipRequest:
             latestUsedProxy = clipRequest.proxy
-        
 
-        if proxies:
-            allProxies = proxies.copy()
-            if latestUsedProxy:    
-                if latestUsedProxy in allProxies:
-                    allProxies.remove(latestUsedProxy)
-                return random.choice(allProxies)
-            else:
-                return random.choice(allProxies)
-        else:
-            return ""
+        candidateProxies = [proxy for proxy in allProxies if proxy != latestUsedProxy]
+        return random.choice(candidateProxies or allProxies)
 
     def _section_format(self, maxHeight: int) -> str:
         """
@@ -192,10 +187,14 @@ class ClipProcessingService:
         
         # Handle duration checks (cleanup logic)
         if video_duration is not None and endSec > video_duration:
-            # If user requested time beyond video length, update DB to reflect reality
-            # yt-dlp automatically clipped to end
-    
-            clipRequest.end_time = info.get('duration_string', str(video_duration))
+            # If user requested time beyond video length, update DB to reflect reality.
+            # process=False omits duration_string, so format seconds as HH:MM:SS for TimeField.
+            durationString = info.get('duration_string')
+            if not durationString:
+                hours, remainder = divmod(int(video_duration), 3600)
+                minutes, seconds = divmod(remainder, 60)
+                durationString = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+            clipRequest.end_time = durationString
 
         clipRequest.save(update_fields=['video_info', 'clip_duration', 'end_time'])
     
@@ -212,9 +211,11 @@ class ClipProcessingService:
             if dirName:
                 os.makedirs(dirName, exist_ok=True)
 
-        # download=False: manifests and stream URLs only, no media bytes yet.
+        # download=False, process=False: fetch raw metadata and format list only.
+        # Skipping process_ie_result here prevents yt-dlp from pre-selecting default 4K
+        # requested_formats, which otherwise leak into single-stream downloads later.
         with yt_dlp.YoutubeDL(baseOpts) as ydl:
-            info = ydl.extract_info(clipRequest.youtube_url, download=False)
+            info = ydl.extract_info(clipRequest.youtube_url, download=False, process=False)
 
         videoDuration = info.get('duration', None)
         if videoDuration is not None and startSec > videoDuration:

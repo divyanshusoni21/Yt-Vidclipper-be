@@ -77,6 +77,23 @@ class ClipProcessingServiceTest(TestCase):
         self.assertEqual(chosenProxy, "http://proxy2:8080")
 
     @patch("home.services.shutil.which", return_value="/usr/bin/ffmpeg")
+    @patch("home.services.proxies", ["http://proxy1:8080"])
+    def test_get_proxy_with_single_proxy_reuses_it_without_crashing(self, mockWhich):
+        # Single configured proxy must be reused instead of raising IndexError after filtering
+        self.clipRequest.proxy = "http://proxy1:8080"
+        self.clipRequest.save(update_fields=["proxy"])
+
+        service = ClipProcessingService()
+        chosenProxy = service.get_proxy()
+        self.assertEqual(chosenProxy, "http://proxy1:8080")
+
+    @patch("home.services.shutil.which", return_value="/usr/bin/ffmpeg")
+    @patch("home.services.proxies", ["", "  "])
+    def test_get_proxy_returns_empty_string_when_proxies_blank(self, mockWhich):
+        service = ClipProcessingService()
+        self.assertEqual(service.get_proxy(), "")
+
+    @patch("home.services.shutil.which", return_value="/usr/bin/ffmpeg")
     def test_save_video_info_creates_video_detail_and_caps_end_time(self, mockWhich):
         # When requested endSec exceeds actual video duration, end_time is capped to duration_string
         service = ClipProcessingService()
@@ -94,6 +111,22 @@ class ClipProcessingServiceTest(TestCase):
         self.assertIsNotNone(self.clipRequest.video_info)
         self.assertEqual(self.clipRequest.video_info.video_id, "dQw4w9WgXcQ")
         self.assertEqual(str(self.clipRequest.end_time), "00:00:15")
+
+    @patch("home.services.shutil.which", return_value="/usr/bin/ffmpeg")
+    def test_save_video_info_caps_end_time_without_duration_string(self, mockWhich):
+        # process=False does not populate duration_string, so fallback formatting from duration must work
+        service = ClipProcessingService()
+        infoDict = {
+            "id": "dQw4w9WgXcQ",
+            "duration": 75,
+            "title": "Rick Astley",
+            "channel": "Official Channel",
+            "channel_id": "UC123",
+        }
+        service.save_video_info(infoDict, self.clipRequest, clipDurationSeconds=10, endSec=90)
+        self.clipRequest.refresh_from_db()
+
+        self.assertEqual(str(self.clipRequest.end_time), "00:01:15")
 
     @patch("home.services.shutil.which", return_value="/usr/bin/ffmpeg")
     @patch("home.services.yt_dlp.YoutubeDL")
@@ -116,6 +149,12 @@ class ClipProcessingServiceTest(TestCase):
                 out720pPathAbsolute=out720,
                 out480pPathAbsolute=out480,
             )
+
+        mockYdlInstance.extract_info.assert_called_once_with(
+            self.clipRequest.youtube_url,
+            download=False,
+            process=False,
+        )
 
     @patch("home.services.shutil.which", return_value="/usr/bin/ffmpeg")
     def test_process_clip_request_success_creates_720p_and_480p_clips(self, mockWhich):
