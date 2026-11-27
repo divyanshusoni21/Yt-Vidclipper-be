@@ -89,6 +89,18 @@ class ProcessClipTaskTest(TestCase):
         with self.assertRaises(UnavailableVideoError):
             process_clip_task.run(str(self.clipRequest.id))
 
+    @patch("home.tasks.ClipProcessingService", side_effect=FileNotFoundError("ffmpeg is not installed"))
+    @patch("home.tasks.record_crash_attempt", return_value=False)
+    def test_marks_failed_when_ffmpeg_missing_during_service_init(
+        self, mockRecordCrash, mockServiceClass
+    ):
+        # Missing ffmpeg raises FileNotFoundError in __init__ before process_clip_request runs
+        with self.assertRaises(FileNotFoundError):
+            process_clip_task.run(str(self.clipRequest.id))
+        self.clipRequest.refresh_from_db()
+        self.assertEqual(self.clipRequest.status, CLIP_STATUS_CHOICES.FAILED)
+        self.assertIn("ffmpeg", self.clipRequest.error_message)
+
 
 @override_settings(MEDIA_ROOT=tempfile.gettempdir())
 class ProcessSpeedEditTaskTest(TestCase):
@@ -129,6 +141,18 @@ class ProcessSpeedEditTaskTest(TestCase):
         result = process_speed_edit_task.run(str(self.speedEditRequest.id))
         self.assertTrue(result)
         mockClearCrash.assert_called_once()
+
+    @patch("home.tasks.SpeedEditService", side_effect=FileNotFoundError("ffmpeg is not installed"))
+    @patch("home.tasks.record_crash_attempt", return_value=False)
+    def test_marks_failed_when_ffmpeg_missing_during_service_init(
+        self, mockRecordCrash, mockServiceClass
+    ):
+        # Missing ffmpeg raises FileNotFoundError in __init__ before process_speed_edit_request runs
+        with self.assertRaises(FileNotFoundError):
+            process_speed_edit_task.run(str(self.speedEditRequest.id))
+        self.speedEditRequest.refresh_from_db()
+        self.assertEqual(self.speedEditRequest.status, CLIP_STATUS_CHOICES.FAILED)
+        self.assertIn("ffmpeg", self.speedEditRequest.error_message)
 
 
 class CleanupAndEmailTasksTest(TestCase):

@@ -84,6 +84,16 @@ def process_clip_task(self, clipRequestId: str) -> bool:
     try:
         clipProcessingService = ClipProcessingService()
         didFinish = clipProcessingService.process_clip_request(clipRequest)
+    except FileNotFoundError as exc:
+        # Raised before process_clip_request runs (e.g. missing ffmpeg in __init__),
+        # so mark the request FAILED here before re-raising for dont_autoretry_for.
+        logger.error(f"Clip task failed for {clipRequestId}: {exc}")
+        update_obj_status(
+            clipRequest,
+            status=CLIP_STATUS_CHOICES.FAILED,
+            errorMessage=str(exc),
+        )
+        raise
     except SoftTimeLimitExceeded:
         # The hard kill follows this signal. Clean up partial files before re-raising.
         logger.error(f"Clip task hit the soft time limit for {clipRequestId}")
@@ -146,6 +156,16 @@ def process_speed_edit_task(self, speedEditRequestId: str) -> bool:
     try:
         speedEditService = SpeedEditService()
         didFinish = speedEditService.process_speed_edit_request(speedEditRequest)
+    except FileNotFoundError as exc:
+        # Raised before process_speed_edit_request runs (e.g. missing ffmpeg in __init__),
+        # so mark the request FAILED here so it does not remain stuck in PENDING.
+        logger.error(f"Speed edit task failed for {speedEditRequestId}: {exc}")
+        update_obj_status(
+            speedEditRequest,
+            status=CLIP_STATUS_CHOICES.FAILED,
+            errorMessage=str(exc),
+        )
+        raise
     except SoftTimeLimitExceeded:
         # The hard kill follows this signal. Clean up partial files before re-raising.
         logger.error(f"Speed edit task hit the soft time limit for {speedEditRequestId}")
